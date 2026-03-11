@@ -47,6 +47,7 @@
     "cmdk": "1.1.1",
     "date-fns": "3.6.0",
     "electron-log": "^5.4.3",
+    "electron-updater": "^6.8.3",
     "embla-carousel-react": "8.6.0",
     "input-otp": "1.4.2",
     "lucide-react": "0.487.0",
@@ -100,5 +101,20 @@
     "overrides": {
       "vite": "6.3.5"
     }
+  },
+  "build": {
+    "appId": "com.gankston.staffadmin",
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "gankston",
+        "repo": "StaffAdmin",
+        "releaseType": "release"
+      }
+    ]
   }
 }
