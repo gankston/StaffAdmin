@@ -1,0 +1,1404 @@
+import { useState, useRef, useEffect } from "react";
+
+declare global {
+  interface Window {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    electronAPI: any;
+  }
+}
+
+import {
+  ChevronDown,
+  CheckCircle2,
+  AlertCircle,
+  Users,
+  Cpu,
+  FlaskConical,
+  Truck,
+  Headphones,
+  DollarSign,
+  Building2,
+  Bell,
+  Settings,
+  Search,
+  TrendingUp,
+  TrendingDown,
+  FileSpreadsheet,
+  X,
+  AlertTriangle,
+  BarChart2,
+  RefreshCw,
+  Trash2,
+  UserCog,
+  Download,
+  Plus,
+  LogOut,
+  ChevronRight,
+  UserPlus
+} from "lucide-react";
+
+
+type CardState = "sent" | "missing";
+
+interface Sector {
+  id: number;
+  apiId: string;   // real string ID from API (e.g. "sec-construccion")
+  name: string;
+  employees: number;
+  state: CardState;
+  icon: string;
+  encargado: string;
+  trend: number;
+}
+
+const getIcon = (iconName: string) => {
+  switch (iconName) {
+    case 'Cpu': return <Cpu size={24} />;
+    case 'Truck': return <Truck size={24} />;
+    case 'Users': return <Users size={24} />;
+    case 'DollarSign': return <DollarSign size={24} />;
+    case 'FlaskConical': return <FlaskConical size={24} />;
+    case 'Headphones': return <Headphones size={24} />;
+    default: return <Building2 size={24} />;
+  }
+};
+
+function SectorDropdown({ value, onChange, sectors }: { value: string; onChange: (v: string) => void; sectors: Sector[] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const fn = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, []);
+
+  // Dynamic options: "Todos" + real sector names from API (Tarea 2 + 4: sin placeholders)
+  const options = ["Todos", ...sectors.map((s) => s.name)];
+
+  return (
+    <div ref={ref} className="relative w-full">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-5 py-4 rounded-[16px] transition-colors"
+        style={{
+          background: "#2A2A3E",
+          border: open ? "1.5px solid rgba(156,39,176,0.6)" : "1.5px solid rgba(255,255,255,0.1)",
+          cursor: "pointer",
+        }}
+      >
+        <span className="text-white font-semibold" style={{ fontSize: 15 }}>Sector: {value}</span>
+        <ChevronDown size={18} color="rgba(255,255,255,0.5)" style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }} />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 z-50 mt-2 rounded-[16px] overflow-hidden" style={{ background: "#232336", border: "1.5px solid rgba(255,255,255,0.1)", boxShadow: "0 10px 40px rgba(0,0,0,0.5)", maxHeight: 260, overflowY: "auto" }}>
+          {options.map((opt) => (
+            <button
+              key={opt}
+              onClick={() => { onChange(opt); setOpen(false); }}
+              className="w-full flex items-center px-5 py-3.5 text-left transition-colors hover:bg-white/5 text-white"
+              style={{
+                background: opt === value ? "rgba(156,39,176,0.15)" : "transparent",
+                borderLeft: opt === value ? "3px solid #9C27B0" : "3px solid transparent",
+                fontSize: 14, fontWeight: opt === value ? 600 : 400, cursor: "pointer",
+              }}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatsCard({ filter, sectors }: { filter: string, sectors: Sector[] }) {
+  // Filter applies only to this stats card (Tarea 3: real counts from API data)
+  const src = filter === "Todos" ? sectors : sectors.filter((s) => s.name === filter);
+  const totalEmpleados = src.reduce((a, c) => a + c.employees, 0);
+  // Activos = all employees (is_active is not known at sector level, only in modal)
+  // Registros and Horas come from /api/attendances (endpoint pending)
+  const totalRegistros = totalEmpleados; // placeholder: 1 registro por empleado
+  const ausentes = 0;  // pending /api/attendances
+  const horasTotales = 0; // pending /api/attendances
+
+  return (
+    <div className="p-6 rounded-[16px]" style={{ background: "linear-gradient(135deg, #9C27B0 0%, #26C6DA 100%)", boxShadow: "0 12px 32px rgba(156,39,176,0.25)" }}>
+      <h2 className="text-white mb-6" style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.01em" }}>Estadísticas del Período</h2>
+      <div className="grid grid-cols-2 gap-y-6 gap-x-4">
+        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Total Registros</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{totalRegistros.toLocaleString("es")}</p></div>
+        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Empleados</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{totalEmpleados.toLocaleString("es")}</p></div>
+        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Activos</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{totalEmpleados.toLocaleString("es")}</p></div>
+        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Ausentes</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{ausentes}</p></div>
+        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Totales</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{totalEmpleados.toLocaleString("es")}</p></div>
+        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Horas Totales</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{horasTotales > 0 ? horasTotales.toLocaleString("es") : "—"}</p></div>
+      </div>
+    </div>
+  );
+}
+
+function SectorCard({ sector, onClick }: { sector: Sector; onClick: () => void }) {
+  const sent = sector.state === "sent";
+  const bg = sent ? "#4CAF50" : "#FF5252";
+  const badgeText = sent ? "Enviado" : "Faltante";
+
+  return (
+    <div
+      onClick={onClick}
+      className="cursor-pointer select-none flex flex-col transition-transform hover:scale-[1.02] active:scale-[0.98]"
+      style={{
+        background: bg,
+        borderRadius: 16,
+        padding: 24,
+        minHeight: 240,
+        boxShadow: `0 8px 24px ${sent ? 'rgba(76,175,80,0.2)' : 'rgba(255,82,82,0.2)'}`,
+      }}
+    >
+      <div className="flex items-start justify-between mb-5">
+        <div className="flex items-center justify-center rounded-xl" style={{ width: 48, height: 48, background: "rgba(255,255,255,0.2)", color: "#fff" }}>
+          {getIcon(sector.icon)}
+        </div>
+        <div className="px-3.5 py-1.5 rounded-full flex items-center gap-1.5" style={{ background: "rgba(255,255,255,0.2)" }}>
+          {sent ? <CheckCircle2 size={14} color="#fff" /> : <AlertCircle size={14} color="#fff" />}
+          <span className="text-white font-bold tracking-wide" style={{ fontSize: 12 }}>{badgeText}</span>
+        </div>
+      </div>
+      <h3 className="text-white font-bold leading-tight mb-2" style={{ fontSize: 22, letterSpacing: "-0.01em" }}>{sector.name}</h3>
+      <div className="flex-1" />
+      <p className="text-white/80 font-semibold uppercase tracking-wider mb-1" style={{ fontSize: 11 }}>Total Empleados</p>
+      <div className="text-white font-black leading-none mb-6" style={{ fontSize: 44, letterSpacing: "-0.02em" }}>{sector.employees}</div>
+      <div className="flex items-end justify-between border-t border-white/20 pt-4 mt-auto">
+        <span className="text-white font-semibold" style={{ fontSize: 13, opacity: 0.9 }}>Encargado: {sector.encargado}</span>
+        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.2)" }}>
+          {sector.trend >= 0 ? <TrendingUp size={14} color="#fff" /> : <TrendingDown size={14} color="#fff" />}
+          <span className="text-white font-bold" style={{ fontSize: 13 }}>{sector.trend >= 0 ? "+" : ""}{sector.trend}%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface Employee {
+  id: string;
+  sector_id: string;
+  first_name: string;
+  last_name: string;
+  dni?: string | null;          // field from API
+  external_code?: string | null;
+  is_active: boolean;
+}
+
+function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, onDeleteEmployee, onDeleteSector }: { sector: Sector; onClose: () => void; onExport: () => void; isAdmin: boolean; onCreateEmployee?: () => void; onDeleteEmployee?: (id: string) => Promise<void>; onDeleteSector?: (id: string) => Promise<void> }) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [empLoading, setEmpLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const isMissing = sector.state === "missing";
+
+  // ── Period state: default = current month/year ───────────────────────────
+  const now = new Date();
+  const [periodMonth, setPeriodMonth] = useState(now.getMonth() + 1);  // 1-12
+  const [periodYear, setPeriodYear] = useState(now.getFullYear());
+
+  // ── Export handler: fetches real attendances then generates Excel ──────────
+  // Período 21→20: e.g. Marzo 2026 = 2026-02-21 to 2026-03-20
+  const handleExport = async () => {
+    if (exporting || !window.electronAPI?.exportExcel) return;
+    setExporting(true);
+    try {
+      // 1. Calculate period date range in YYYY-MM-DD format
+      const fromMonth = periodMonth === 1 ? 12 : periodMonth - 1;
+      const fromYear = periodMonth === 1 ? periodYear - 1 : periodYear;
+      const startDate = `${fromYear}-${String(fromMonth).padStart(2, '0')}-21`;
+      const endDate = `${periodYear}-${String(periodMonth).padStart(2, '0')}-20`;
+
+      // 2. Fetch real attendances for this sector + period
+      let attendances: any[] = [];
+      if (window.electronAPI?.getAttendances) {
+        console.log(`[Export] Consultando asistencias: ${sector.apiId} ${startDate} → ${endDate}`);
+        attendances = await window.electronAPI.getAttendances(sector.apiId, startDate, endDate);
+        console.log(`[Export] Asistencias recibidas: ${attendances.length}`);
+      }
+
+      // 3. Generate Excel with real data
+      const result = await window.electronAPI.exportExcel({
+        sectorName: sector.name,
+        encargado: sector.encargado,
+        employees: employees,
+        attendances: attendances,     // real attendance rows
+        periodMonth,
+        periodYear,
+      });
+
+      if (result.success && result.base64) {
+        // Convert base64 to Blob
+        const byteCharacters = atob(result.base64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const excelBlob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+        // Trigger manual download in browser
+        const url = window.URL.createObjectURL(excelBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', result.fileName || 'asistencia.xlsx');
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+
+        onExport();
+        console.log('[Export] Archivo descargado visualmente:', result.fileName);
+      } else {
+        if (result.error === 'Usuario canceló el guardado') {
+          console.log('[Export] Cancelado por el usuario.');
+        } else {
+          console.error('[Export] Error:', result.error);
+        }
+      }
+    } catch (err) {
+      console.error('[Export] IPC error:', err);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // useEffect: re-triggers when selectedSectorId changes (triggered by sector prop)
+  useEffect(() => {
+    setEmpLoading(true);
+    setEmployees([]);
+    if (window.electronAPI?.getEmployees) {
+      window.electronAPI.getEmployees(sector.apiId)
+        .then((data: Employee[]) => {
+          console.log('Cargando empleados del sector:', sector.apiId);
+          console.log('Empleados recibidos:', data);
+          console.log('Empleados cargados:', data.length);
+          setEmployees(data);
+        })
+        .catch((err: unknown) => console.error('[FloatingModal] employee fetch failed:', err))
+        .finally(() => setEmpLoading(false));
+    } else {
+      setEmpLoading(false);
+    }
+  }, [sector.apiId]);
+
+  return (
+    <div
+      className="rounded-3xl overflow-hidden flex flex-col"
+      style={{
+        background: "#2A2A3E",
+        border: "1.5px solid rgba(255,255,255,0.1)",
+        boxShadow: "0 32px 80px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.04)",
+        width: 340,
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div style={{ height: 4, background: "linear-gradient(90deg, #9C27B0, #26C6DA)" }} />
+      <div className="p-7">
+        <div className="flex items-start justify-between mb-5">
+          <div>
+            <h3 className="text-white" style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.01em" }}>{sector.name}</h3>
+            <div className="flex items-center gap-2 mt-2.5">
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: isMissing ? "#FF5252" : "#4CAF50" }} />
+              <span style={{ fontSize: 12, color: isMissing ? "#FF5252" : "#4CAF50", fontWeight: 700 }}>
+                {isMissing ? "Faltante" : "Enviado"}
+              </span>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginLeft: 6 }}>
+                {sector.employees} empleados
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {isAdmin && onDeleteSector && (
+              <button 
+                onClick={() => {
+                  if(confirm(`¿ELIMINAR TODO EL SECTOR "${sector.name.toUpperCase()}"?\n\nEsta acción borrará también a todos los empleados de este sector y no se puede deshacer.`)) {
+                    onDeleteSector(sector.apiId).then(() => onClose());
+                  }
+                }}
+                className="flex items-center justify-center rounded-xl transition-all hover:bg-red-500/20 active:scale-95 group"
+                style={{ width: 42, height: 42, background: "rgba(255,82,82,0.1)", border: "1px solid rgba(255,82,82,0.2)", cursor: "pointer" }}
+                title="Eliminar Sector"
+              >
+                <Trash2 size={18} color="#FF5252" />
+              </button>
+            )}
+            <button
+              onClick={handleExport}
+              onMouseEnter={() => isMissing && setShowTooltip(true)}
+              onMouseLeave={() => setShowTooltip(false)}
+              className="flex items-center justify-center rounded-xl transition-all hover:bg-white/10 active:scale-95 relative"
+              style={{ 
+                width: 42, 
+                height: 42, 
+                background: exporting ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.05)", 
+                border: "1px solid rgba(255,255,255,0.1)", 
+                cursor: exporting || isMissing ? "not-allowed" : "pointer",
+                opacity: isMissing ? 0.3 : 1
+              }}
+              disabled={exporting || isMissing}
+            >
+              {exporting ? (
+                <div className="rounded-full flex-shrink-0" style={{ width: 18, height: 18, border: "2px solid rgba(255,255,255,0.1)", borderTop: "2px solid #C86FE8", animation: "spin 0.8s linear infinite" }} />
+              ) : (
+                <Download size={18} color="rgba(255,255,255,0.7)" />
+              )}
+            </button>
+          </div>
+          <button
+            onClick={onClose}
+            className="flex items-center justify-center rounded-xl transition-colors hover:bg-white/10"
+            style={{ width: 34, height: 34, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer", flexShrink: 0 }}
+          >
+            <X size={15} color="rgba(255,255,255,0.6)" />
+          </button>
+        </div>
+
+        {/* Stats counters — driven by real employee data once API endpoint is live */}
+        <div className="grid grid-cols-3 gap-2.5 mb-5">
+          {[
+            {
+              l: "Registros",
+              v: empLoading ? "—" : employees.length.toLocaleString(),
+              sub: "total"
+            },
+            {
+              l: "Activos",
+              v: empLoading ? "—" : employees.filter((e: Employee) => e.is_active).length.toLocaleString(),
+              sub: "en nómina"
+            },
+            {
+              l: "Horas",
+              v: "—",   // from /api/attendances — endpoint pending
+              sub: "asistencia"
+            },
+          ].map((s) => (
+            <div key={s.l} className="rounded-2xl px-3.5 py-3" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}>
+              <p style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", letterSpacing: "0.09em", textTransform: "uppercase", marginBottom: 4 }}>{s.l}</p>
+              <p className="text-white" style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>{s.v}</p>
+              <p style={{ fontSize: 9, color: "rgba(255,255,255,0.25)", marginTop: 2 }}>{s.sub}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Employee List — fetched via useEffect on sector.apiId */}
+        <div className="mb-5">
+          <p className="text-white/40 font-semibold uppercase tracking-wider mb-3" style={{ fontSize: 10 }}>Empleados del Sector</p>
+          {empLoading ? (
+            <div className="flex items-center gap-3 py-3">
+              <div className="rounded-full flex-shrink-0" style={{ width: 18, height: 18, border: "2px solid rgba(255,255,255,0.1)", borderTop: "2px solid #9C27B0", animation: "spin 0.8s linear infinite" }} />
+              <span className="text-white/30" style={{ fontSize: 12 }}>Cargando empleados…</span>
+            </div>
+          ) : employees.length === 0 ? (
+            <div className="rounded-xl px-4 py-3 text-center" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <p className="text-white/25" style={{ fontSize: 12 }}>Sin empleados en este sector</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
+              {employees.map((emp) => (
+                <div key={emp.id} className="flex items-center justify-between rounded-xl px-3.5 py-2.5 hover:bg-white/5 transition-colors" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 28, height: 28, background: "rgba(156,39,176,0.18)", color: "#C86FE8", fontSize: 11, fontWeight: 700 }}>
+                      {emp.first_name.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-white" style={{ fontSize: 12, fontWeight: 600 }}>{emp.first_name} {emp.last_name}</p>
+                      {emp.dni && <p className="text-white/35" style={{ fontSize: 10 }}>DNI: {emp.dni}</p>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-full" style={{ fontSize: 10, fontWeight: 600, background: emp.is_active ? "rgba(76,175,80,0.15)" : "rgba(255,82,82,0.15)", color: emp.is_active ? "#4CAF50" : "#FF5252" }}>
+                      {emp.is_active ? "Activo" : "Inactivo"}
+                    </span>
+                    {isAdmin && onDeleteEmployee && (
+                      <button 
+                        onClick={() => {
+                          if(confirm(`¿Eliminar a ${emp.first_name} ${emp.last_name}?`)) {
+                            onDeleteEmployee(emp.id).then(() => {
+                              setEmployees(prev => prev.filter(e => e.id !== emp.id));
+                            });
+                          }
+                        }}
+                        className="p-1.5 rounded-lg hover:bg-red-500/20 transition-colors"
+                        style={{ cursor: "pointer", color: "#FF5252" }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ height: 1, background: "rgba(255,255,255,0.07)", marginBottom: 20 }} />
+
+        {isAdmin && (
+          <button
+            onClick={onCreateEmployee}
+            className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl transition-all hover:bg-white/10 mb-5"
+            style={{ background: "rgba(156,39,176,0.15)", border: "1px dashed rgba(156,39,176,0.4)", cursor: "pointer", color: "#C86FE8", fontSize: 13, fontWeight: 700 }}
+          >
+            + Agregar Empleado a este Sector
+          </button>
+        )}
+
+        <div className="flex flex-col gap-3 relative">
+
+          {/* Tooltip implementation */}
+          {isMissing && showTooltip && (
+            <div
+              className="absolute z-50 flex items-start gap-2.5 px-4 py-3 rounded-2xl"
+              style={{
+                top: -55,
+                left: 0,
+                right: 0,
+                background: "#2A2A3E",
+                border: "1.5px solid rgba(255,82,82,0.45)",
+                boxShadow: "0 6px 24px rgba(255,82,82,0.12), 0 2px 10px rgba(0,0,0,0.4)",
+              }}
+            >
+              <AlertTriangle size={14} color="#FF5252" style={{ flexShrink: 0, marginTop: 1 }} />
+              <p style={{ fontSize: 12, color: "rgba(255,255,255,0.72)", lineHeight: 1.5 }}>
+                No se puede exportar debido a <span style={{ color: "#FF5252", fontWeight: 700 }}>tarjeta faltante</span>
+              </p>
+              <div style={{ position: "absolute", bottom: -8, left: 32, width: 0, height: 0, borderLeft: "7px solid transparent", borderRight: "7px solid transparent", borderTop: "8px solid rgba(255,82,82,0.45)" }} />
+            </div>
+          )}
+
+          {/* Period selector ─── Tarea 1: Período 21→20 */}
+          <div className="mb-4">
+            <p className="text-white/40 font-semibold uppercase tracking-wider mb-2" style={{ fontSize: 10 }}>Período de exportación</p>
+            <div className="flex gap-2">
+              <select
+                value={periodMonth}
+                onChange={(e) => setPeriodMonth(Number(e.target.value))}
+                className="flex-1 rounded-xl px-3 py-2 text-white font-semibold appearance-none"
+                style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 13, cursor: "pointer", outline: "none" }}
+              >
+                {['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+                  .map((m, i) => <option key={m} value={i + 1} style={{ background: "#2A2A3E" }}>{m}</option>)}
+              </select>
+              <select
+                value={periodYear}
+                onChange={(e) => setPeriodYear(Number(e.target.value))}
+                className="rounded-xl px-3 py-2 text-white font-semibold appearance-none"
+                style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 13, cursor: "pointer", outline: "none", width: 90 }}
+              >
+                {[2024, 2025, 2026, 2027].map((y) => <option key={y} value={y} style={{ background: "#2A2A3E" }}>{y}</option>)}
+              </select>
+            </div>
+            <div className="mt-3 p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.15)" }}>
+              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.8)", lineHeight: 1.5, textAlign: "center" }}>
+                Estás por exportar las horas del <strong className="text-white font-bold tracking-wide">21/{String(periodMonth === 1 ? 12 : periodMonth - 1).padStart(2, '0')}/{periodMonth === 1 ? periodYear - 1 : periodYear}</strong> al <strong className="text-white font-bold tracking-wide">20/{String(periodMonth).padStart(2, '0')}/{periodYear}</strong>.
+              </p>
+            </div>
+          </div>
+
+          <div
+            onMouseEnter={() => isMissing && setShowTooltip(true)}
+            onMouseLeave={() => setShowTooltip(false)}
+            className="w-full"
+          >
+            <button
+              onClick={handleExport}
+              // Eliminamos booleanos de disabled para probar el modal con click siempre
+              disabled={exporting}
+              className={`flex items-center justify-center gap-2.5 w-full py-3.5 rounded-2xl transition-all ${!exporting ? 'hover:opacity-90 active:scale-[0.98]' : 'opacity-50 cursor-not-allowed'}`}
+              style={{ background: "linear-gradient(135deg, #4CAF50, #2E7D32)", border: "none", cursor: exporting ? "not-allowed" : "pointer", boxShadow: "0 6px 22px rgba(76,175,80,0.3)" }}
+            >
+              {exporting
+                ? <><div className="rounded-full" style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.2)", borderTop: "2px solid #fff", animation: "spin 0.8s linear infinite" }} /><span className="text-white" style={{ fontSize: 13, fontWeight: 700 }}>Exportando...</span></>
+                : <><FileSpreadsheet size={16} color="#fff" /><span className="text-white" style={{ fontSize: 13, fontWeight: 700 }}>Exportar en Excel</span></>}
+            </button>
+          </div>
+
+          <button
+            className="flex items-center justify-center gap-2.5 w-full py-3.5 rounded-2xl transition-all hover:bg-white/10"
+            style={{ background: "rgba(255,255,255,0.06)", border: "1.5px solid rgba(255,255,255,0.11)", cursor: "pointer" }}
+          >
+            <BarChart2 size={16} color="rgba(255,255,255,0.7)" />
+            <span className="text-white" style={{ fontSize: 13, fontWeight: 600 }}>Ver estadísticas</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [sectors, setSectors] = useState<Sector[]>([]);
+  const [filter, setFilter] = useState("Todos");
+  const [selectedSector, setSelectedSector] = useState<Sector | null>(null);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);  // LaunchedEffect equivalent
+  const [errorMessage, setErrorMessage] = useState<string | null>(null); // visible error feedback
+
+  // States for Authentication (Login / Logout)
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [keepLoggedIn, setKeepLoggedIn] = useState(false);
+  const [loginError, setLoginError] = useState(false);
+  const [loginErrorMsg, setLoginErrorMsg] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  // Adjust: unread notifications badge — disappears permanently on first open
+  const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
+
+  // New States for Creation Modals
+  const [showCreateAdminModal, setShowCreateAdminModal] = useState(false);
+  const [newAdminUser, setNewAdminUser] = useState("");
+  const [newAdminPass, setNewAdminPass] = useState("");
+
+  const [showCreateSectorModal, setShowCreateSectorModal] = useState(false);
+  const [newSectorName, setNewSectorName] = useState("");
+  const [newSectorEncargado, setNewSectorEncargado] = useState("");
+
+  const [showCreateEmployeeModal, setShowCreateEmployeeModal] = useState<Sector | null>(null);
+  const [newEmployeeFirst, setNewEmployeeFirst] = useState("");
+  const [newEmployeeLast, setNewEmployeeLast] = useState("");
+  const [newEmployeeDNI, setNewEmployeeDNI] = useState("");
+
+  const [creationLoading, setCreationLoading] = useState(false);
+  const [creationError, setCreationError] = useState("");
+
+  const [showAdminManagement, setShowAdminManagement] = useState(false);
+  const [adminUsers, setAdminUsers] = useState<any[]>([]);
+  const [loadingAdmins, setLoadingAdmins] = useState(false);
+  const [editingAdmin, setEditingAdmin] = useState<any | null>(null);
+  const [editAdminUser, setEditAdminUser] = useState("");
+  const [editAdminPass, setEditAdminPass] = useState("");
+
+  const getAdminUsername = () => {
+    try {
+      const u = localStorage.getItem("admin_user") || sessionStorage.getItem("admin_user");
+      if (u) return JSON.parse(u).username;
+    } catch { }
+    return null;
+  };
+  const isAdmin = getAdminUsername() === 'admin';
+
+  useEffect(() => {
+    // Fetch real notifications from the backend API
+    fetch('https://staffaxis-api-prod.pgastonor.workers.dev/api/notifications')
+      .then(res => res.json())
+      .then(data => {
+        if (data.notifications && data.notifications.length > 0) {
+          setNotifications(data.notifications);
+          setHasUnreadNotifications(true);
+        }
+      })
+      .catch(err => console.error('Error fetching notifications:', err));
+  }, []);
+
+  // Reference for Notifications Dropdown "click outside to close"
+  const notificationsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleNotifClickOutside = (event: MouseEvent) => {
+      if (notificationsRef.current && !notificationsRef.current.contains(event.target as Node)) {
+        setShowNotifications(false);
+      }
+    };
+    if (showNotifications) {
+      document.addEventListener("mousedown", handleNotifClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleNotifClickOutside);
+  }, [showNotifications]);
+
+  // Reference for Settings Dropdown "click outside to close"
+  const settingsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
+        setShowSettingsMenu(false);
+      }
+    };
+    if (showSettingsMenu) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showSettingsMenu]);
+
+  // Session management logic
+  const handleLogout = (expired = false) => {
+    localStorage.removeItem("admin_token");
+    localStorage.removeItem("admin_user");
+    sessionStorage.removeItem("admin_token");
+    sessionStorage.removeItem("admin_user");
+    setIsLoggedIn(false);
+    setShowSettingsMenu(false);
+    setUsername('');
+    setPassword('');
+    setLoginError(false);
+    setLoginErrorMsg("");
+    setIsLoggingIn(false);
+
+    if (expired) {
+      setLoginErrorMsg("Tu sesión ha expirado por seguridad");
+      setLoginError(true);
+    }
+  };
+
+  useEffect(() => {
+    // Only verify if a token exists to auto-login on startup. No expiration intervals.
+    const token = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token");
+    if (token && !isLoggedIn) {
+      setIsLoggedIn(true);
+    } else if (!token && isLoggedIn) {
+      handleLogout();
+    }
+  }, [isLoggedIn]);
+
+  // Exrtracted Login Logic
+  const attemptLogin = async () => {
+    if (!username || !password) return;
+    setIsLoggingIn(true);
+    setLoginError(false);
+    setLoginErrorMsg("");
+
+    try {
+      const response = await fetch("https://staffaxis-api-prod.pgastonor.workers.dev/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await response.json();
+      console.log("Respuesta de API Login:", data);
+
+      if (response.ok && data.success) {
+        const storage = keepLoggedIn ? localStorage : sessionStorage;
+        storage.setItem("admin_token", data.token);
+        storage.setItem("admin_user", JSON.stringify(data.user));
+        setIsLoggedIn(true);
+      } else {
+        setLoginError(true);
+        setLoginErrorMsg("Usuario o contraseña incorrectos");
+      }
+    } catch (err) {
+      console.error("Error al intentar iniciar sesión:", err);
+      setLoginError(true);
+      setLoginErrorMsg("Error de conexión");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleLoginKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      attemptLogin();
+    }
+  };
+
+  const getHeaders = () => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const rawToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+    const token = rawToken === "undefined" ? "" : rawToken;
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    } else {
+      const userStr = localStorage.getItem("admin_user") || sessionStorage.getItem("admin_user");
+      if (userStr) {
+        try {
+          const userObj = JSON.parse(userStr);
+          if (userObj?.username) headers["X-User-Role"] = userObj.username;
+        } catch (e) {}
+      }
+    }
+    return headers;
+  };
+
+  // Move loadSectors up to avoid temporal dead zone
+  const loadSectors = (showLoading = true) => {
+    if (window.electronAPI) {
+      if (showLoading) setIsLoading(true);
+      setErrorMessage(null); // clear previous errors before each fetch
+      window.electronAPI.getSectors()
+        .then((data: Sector[]) => {
+          setSectors(data);
+        })
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('[App] Failed to load sectors from API:', msg);
+          setErrorMessage(msg);  
+          setSectors([]);
+        })
+        .finally(() => {
+          setIsLoading(false);
+        });
+    } else {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => { loadSectors(); }, []);
+  const handleCreateAdmin = async () => {
+    if (!newAdminUser || !newAdminPass) return setCreationError("Completá todos los campos");
+    setCreationLoading(true); setCreationError("");
+    
+    const headers = getHeaders();
+    console.log("Enviando headers para Crear Admin:", headers);
+
+    try {
+      const res = await fetch("https://staffaxis-api-prod.pgastonor.workers.dev/api/admin-users", {
+        method: "POST", headers,
+        body: JSON.stringify({ username: newAdminUser, password: newAdminPass })
+      });
+      if (res.ok) {
+        setShowCreateAdminModal(false); setNewAdminUser(""); setNewAdminPass("");
+      } else {
+        const d = await res.json(); setCreationError(d.error || "Error al crear empleado");
+      }
+    } catch (e) { setCreationError("Error de conexión"); }
+    setCreationLoading(false);
+  };
+
+  const handleCreateSector = async () => {
+    if (!newSectorName || !newSectorEncargado) return setCreationError("Completá todos los campos");
+    setCreationLoading(true); setCreationError("");
+
+    const headers = getHeaders();
+    console.log("Enviando headers para Crear Sector:", headers);
+
+    try {
+      const res = await fetch("https://staffaxis-api-prod.pgastonor.workers.dev/api/sectors", {
+        method: "POST", headers,
+        body: JSON.stringify({ name: newSectorName, encargado: newSectorEncargado })
+      });
+      if (res.ok) {
+        setShowCreateSectorModal(false); setNewSectorName(""); setNewSectorEncargado(""); loadSectors(true);
+      } else {
+        const d = await res.json(); setCreationError(d.error || "Error al crear sector");
+      }
+    } catch (e) { setCreationError("Error de conexión"); }
+    setCreationLoading(false);
+  };
+
+  const handleCreateEmployee = async () => {
+    if (!newEmployeeFirst || !newEmployeeLast || !newEmployeeDNI) return setCreationError("Completá todos los campos obligatorios");
+    setCreationLoading(true); setCreationError("");
+
+    const headers = getHeaders();
+    console.log("Enviando headers para Crear Empleado:", headers);
+
+    try {
+      const res = await fetch("https://staffaxis-api-prod.pgastonor.workers.dev/api/employees", {
+        method: "POST", headers,
+        body: JSON.stringify({ first_name: newEmployeeFirst, last_name: newEmployeeLast, dni: newEmployeeDNI, sector_id: showCreateEmployeeModal?.apiId })
+      });
+      if (res.ok) {
+        setShowCreateEmployeeModal(null); setNewEmployeeFirst(""); setNewEmployeeLast(""); setNewEmployeeDNI("");
+      } else {
+        const d = await res.json(); setCreationError(d.error || "Error al crear empleado");
+      }
+    } catch (e) { setCreationError("Error de conexión"); }
+    setCreationLoading(false);
+  };
+
+  const handleDeleteEmployee = async (id: string) => {
+    const headers = getHeaders();
+    try {
+      const res = await fetch(`https://staffaxis-api-prod.pgastonor.workers.dev/api/employees/${id}`, {
+        method: "DELETE", headers
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        alert(d.error || "Error al eliminar empleado");
+      }
+    } catch (e) { alert("Error de conexión"); }
+  };
+
+  const handleDeleteSector = async (id: string) => {
+    const headers = getHeaders();
+    try {
+      const res = await fetch(`https://staffaxis-api-prod.pgastonor.workers.dev/api/sectors/${id}`, {
+        method: "DELETE", headers
+      });
+      if (res.ok) {
+        loadSectors(true);
+      } else {
+        const d = await res.json();
+        alert(d.error || "Error al eliminar sector");
+      }
+    } catch (e) { alert("Error de conexión"); }
+  };
+
+  const handleFetchAdmins = async () => {
+    setLoadingAdmins(true);
+    try {
+      const res = await fetch("https://staffaxis-api-prod.pgastonor.workers.dev/api/admin-users", {
+        headers: getHeaders()
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setAdminUsers(d.users || []);
+      }
+    } catch (e) { console.error(e); }
+    setLoadingAdmins(false);
+  };
+
+  const handleUpdateAdmin = async () => {
+    if (!editingAdmin || !editAdminUser) return;
+    setLoadingAdmins(true);
+    try {
+      const res = await fetch(`https://staffaxis-api-prod.pgastonor.workers.dev/api/admin-users/${editingAdmin.id}`, {
+        method: "PUT",
+        headers: getHeaders(),
+        body: JSON.stringify({ username: editAdminUser, password: editAdminPass })
+      });
+      if (res.ok) {
+        setEditingAdmin(null); setEditAdminUser(""); setEditAdminPass("");
+        handleFetchAdmins();
+      } else {
+        const d = await res.json(); alert(d.error || "Error al actualizar");
+      }
+    } catch (e) { alert("Error de conexión"); }
+    setLoadingAdmins(false);
+  };
+
+  const handleDeleteAdmin = async (id: string) => {
+    if (!confirm("¿Eliminar este administrador?")) return;
+    setLoadingAdmins(true);
+    try {
+      const res = await fetch(`https://staffaxis-api-prod.pgastonor.workers.dev/api/admin-users/${id}`, {
+        method: "DELETE",
+        headers: getHeaders()
+      });
+      if (res.ok) {
+        handleFetchAdmins();
+      } else {
+        const d = await res.json(); alert(d.error || "Error al eliminar");
+      }
+    } catch (e) { alert("Error de conexión"); }
+    setLoadingAdmins(false);
+  };
+
+  useEffect(() => {
+    if (showAdminManagement) handleFetchAdmins();
+  }, [showAdminManagement]);
+
+  // Auto-close toast launched effect
+  useEffect(() => {
+    if (showSuccessToast) {
+      const timer = setTimeout(() => {
+        setShowSuccessToast(false);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [showSuccessToast]);
+
+  const handleExportSuccess = () => {
+    // Step 3 logic: close modals and show toast
+    setSelectedSector(null);
+    setShowExportModal(false);
+    setShowSuccessToast(true);
+  };
+
+  const hasMissing = sectors.some((s) => s.state === "missing");
+
+  return (
+    <div className="relative min-h-screen w-full" style={{ background: "#1E1E2E", fontFamily: "'Inter', system-ui, sans-serif" }}>
+
+      {/* Absolute Box logic wrapper */}
+      <div
+        className="min-h-screen w-full flex flex-col transition-all duration-300"
+        style={{
+          filter: !isLoggedIn ? "blur(16px)" : "none",
+          pointerEvents: !isLoggedIn ? "none" : "auto"
+        }}
+      >
+        {/* HEADER */}
+        <header className="flex items-center justify-between px-10 py-5 sticky top-0 z-10" style={{ background: "rgba(30,30,46,0.95)", backdropFilter: "blur(12px)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center rounded-xl overflow-hidden" style={{ width: 42, height: 42, background: "rgba(255,255,255,0.05)" }}>
+              <img src="./logo_staffaxis.png" alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            </div>
+            <div>
+              <p className="text-white font-extrabold" style={{ fontSize: 18, letterSpacing: "-0.01em" }}>StaffAdmin</p>
+              <p className="text-white/40" style={{ fontSize: 12 }}>Panel de Control</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", width: 340 }}>
+            <Search size={16} color="rgba(255,255,255,0.4)" />
+            <input placeholder="Buscar sector o empleado…" className="bg-transparent outline-none w-full text-white placeholder-white/40" style={{ fontSize: 14 }} />
+          </div>
+          <div className="flex items-center gap-4" style={{ paddingRight: 120 }}>
+            {/* Adjust 3: Notifications Dropdown */}
+            <div className="relative" ref={notificationsRef}>
+              <button
+                onClick={() => { setShowNotifications(!showNotifications); setHasUnreadNotifications(false); }}
+                className="flex items-center justify-center rounded-xl transition-colors hover:bg-white/10 relative"
+                style={{ width: 42, height: 42, background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer" }}
+              >
+                <Bell size={18} color="rgba(255,255,255,0.7)" />
+                {hasUnreadNotifications && (
+                  <span className="absolute -top-1 -right-1 flex items-center justify-center rounded-full" style={{ width: 10, height: 10, background: "#FF5252", border: "2px solid #1E1E2E" }} />
+                )}
+              </button>
+              {showNotifications && (
+                <div
+                  className="absolute right-0 mt-2 rounded-xl overflow-hidden z-50 py-2"
+                  style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 10px 40px rgba(0,0,0,0.5)", minWidth: 280, maxHeight: 400, overflowY: "auto" }}
+                >
+                  <p className="px-5 py-2 text-white/40 uppercase tracking-wider" style={{ fontSize: 11, fontWeight: 600, borderBottom: "1px solid rgba(255,255,255,0.07)", paddingBottom: 8, marginBottom: 4 }}>Notificaciones</p>
+
+                  {notifications.length > 0 ? (
+                    notifications.map((notif: any) => (
+                      <div key={notif.id} className="flex items-start gap-3 px-4 py-3 hover:bg-white/5 transition-colors border-b border-white/5 last:border-0">
+                        <div className="flex items-center justify-center rounded-full flex-shrink-0 mt-0.5" style={{ width: 28, height: 28, background: "rgba(76,175,80,0.15)" }}>
+                          <CheckCircle2 size={14} color="#4CAF50" />
+                        </div>
+                        <div>
+                          <p className="text-white" style={{ fontSize: 13, fontWeight: 600 }}>Cierre de Tarja</p>
+                          <p className="text-white/60 leading-tight mt-0.5" style={{ fontSize: 12 }}>{notif.message}</p>
+                          <p className="text-white/30 mt-1" style={{ fontSize: 10 }}>
+                            {new Date(notif.date * 1000).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="px-5 py-8 text-center">
+                      <p className="text-white/40" style={{ fontSize: 13 }}>No hay notificaciones nuevas</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="relative" ref={settingsRef}>
+              <button
+                onClick={() => setShowSettingsMenu(!showSettingsMenu)}
+                className="flex items-center justify-center rounded-xl transition-colors hover:bg-white/10"
+                style={{ width: 42, height: 42, background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer" }}
+              >
+                <Settings size={18} color="rgba(255,255,255,0.7)" />
+              </button>
+              {showSettingsMenu && (
+                <div
+                  className="absolute right-0 mt-2 w-48 rounded-xl overflow-hidden z-50 py-1"
+                  style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 10px 40px rgba(0,0,0,0.5)" }}
+                >
+                  {isAdmin && (
+                    <>
+                      <button
+                        onClick={() => { setShowSettingsMenu(false); setShowCreateAdminModal(true); setCreationError(""); }}
+                        className="w-full text-left px-5 py-3 text-white transition-colors hover:bg-white/10"
+                        style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none" }}
+                      >
+                        Crear Nuevo Sector
+                      </button>
+                      <button
+                        onClick={() => { setShowSettingsMenu(false); setShowAdminManagement(true); }}
+                        className="w-full text-left px-5 py-3 text-white transition-colors hover:bg-white/10 flex items-center gap-2"
+                        style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none" }}
+                      >
+                        <UserCog size={14} /> Gestionar Usuarios
+                      </button>
+                      <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "4px 0" }} />
+                    </>
+                  )}
+                  <button
+                    onClick={() => handleLogout()}
+                    className="w-full text-left px-5 py-3.5 text-white transition-colors hover:bg-white/10"
+                    style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none" }}
+                  >
+                    Cerrar sesión
+                  </button>
+                </div>
+              )}
+            </div>
+            {/* Adjust 2: Static profile photo (Salvita avatar) */}
+            <div className="flex items-center gap-3 cursor-pointer ml-2">
+              <div className="rounded-full overflow-hidden" style={{ width: 42, height: 42, flexShrink: 0 }}>
+                <img src="./user_avatar_real.jpg" alt="Avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* DASHBOARD ROW (2-Column Layout) */}
+        <div className="flex-1 flex px-10 py-8 gap-8 mx-auto w-full" style={{ maxWidth: 1600 }}>
+
+          {/* LEFT COLUMN (SIDEBAR) */}
+          <div className="flex flex-col gap-6" style={{ width: 320, flexShrink: 0 }}>
+            <SectorDropdown value={filter} onChange={setFilter} sectors={sectors} />
+            <StatsCard filter={filter} sectors={sectors} />
+            <div className="flex flex-col gap-3 mt-1 px-2">
+              <div className="flex items-center gap-3">
+                <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#4CAF50', boxShadow: '0 0 8px rgba(76,175,80,0.4)' }} />
+                <span className="text-white/80" style={{ fontSize: 13, lineHeight: 1.4 }}><strong className="text-white">Enviado:</strong> Datos actualizados y recibidos a tiempo.</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#FF5252', boxShadow: '0 0 8px rgba(255,82,82,0.4)' }} />
+                <span className="text-white/80" style={{ fontSize: 13, lineHeight: 1.4 }}><strong className="text-white">Faltante:</strong> Faltan registros por enviar.</span>
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT COLUMN — API data with loading state + manual refresh */}
+          <div className="flex-1 flex flex-col">
+            {/* Header row with Refresh button and newly added Global Export button */}
+            <div className="flex items-center justify-between mb-6">
+              <p className="text-white/50 font-semibold uppercase tracking-wider" style={{ fontSize: 11 }}>Panel de Sectores</p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    console.log('Botón de exportar presionado');
+                    setShowExportModal(true);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all hover:opacity-90 active:scale-95"
+                  style={{ background: "linear-gradient(135deg, #FF5252, #D32F2F)", border: "none", cursor: "pointer", boxShadow: "0 6px 16px rgba(255,82,82,0.3)" }}
+                  title="Exportar Todos los Datos"
+                >
+                  <FileSpreadsheet size={14} color="#fff" />
+                  <span className="text-white font-bold" style={{ fontSize: 13 }}>Exportar General</span>
+                </button>
+                <button
+                  onClick={() => loadSectors(true)}
+                  disabled={isLoading}
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl transition-all hover:bg-white/10 active:scale-95"
+                  style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", cursor: isLoading ? "not-allowed" : "pointer", opacity: isLoading ? 0.5 : 1 }}
+                  title="Actualizar desde la API"
+                >
+                  <RefreshCw size={14} color="rgba(255,255,255,0.7)" style={{ animation: isLoading ? "spin 0.8s linear infinite" : "none" }} />
+                  <span className="text-white/70" style={{ fontSize: 12, fontWeight: 600 }}>Actualizar</span>
+                </button>
+              </div>
+            </div>
+            {isLoading ? (
+              /* CircularProgressIndicator equivalent */
+              <div className="flex-1 flex flex-col items-center justify-center gap-4" style={{ minHeight: 320 }}>
+                <div
+                  className="rounded-full"
+                  style={{
+                    width: 48, height: 48,
+                    border: "4px solid rgba(255,255,255,0.1)",
+                    borderTop: "4px solid #9C27B0",
+                    animation: "spin 0.8s linear infinite"
+                  }}
+                />
+                <p className="text-white/40" style={{ fontSize: 14 }}>Cargando sectores…</p>
+                <style dangerouslySetInnerHTML={{ __html: `@keyframes spin { to { transform: rotate(360deg); } }` }} />
+              </div>
+            ) : sectors.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6" style={{ minHeight: 320 }}>
+                <div className="flex items-center justify-center rounded-full" style={{ width: 48, height: 48, background: "rgba(255,82,82,0.15)" }}>
+                  <AlertTriangle size={22} color="#FF5252" />
+                </div>
+                <p className="text-center" style={{ color: "#FF5252", fontSize: 15, fontWeight: 700 }}>
+                  {errorMessage ? "Error al cargar sectores" : "Sin sectores disponibles"}
+                </p>
+                {errorMessage && (
+                  <p className="text-center rounded-xl px-4 py-3 font-mono break-all"
+                    style={{ color: "rgba(255,82,82,0.85)", fontSize: 11, background: "rgba(255,82,82,0.07)", border: "1px solid rgba(255,82,82,0.2)", maxWidth: 560 }}>
+                    {errorMessage}
+                  </p>
+                )}
+                <button
+                  onClick={() => loadSectors(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all hover:opacity-90 active:scale-95"
+                  style={{ background: "rgba(255,82,82,0.15)", border: "1px solid rgba(255,82,82,0.3)", cursor: "pointer" }}
+                >
+                  <RefreshCw size={13} color="#FF5252" />
+                  <span style={{ color: "#FF5252", fontSize: 12, fontWeight: 600 }}>Reintentar</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-6">
+                {sectors.map((s) => (
+                  <SectorCard key={s.id} sector={s} onClick={() => setSelectedSector(s)} />
+                ))}
+              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+
+      {/* OVERRIDING LAYERS (Z-Index > 10) */}
+
+      {/* Step 1 & 2: Floating Modal & Tooltip Overlay */}
+      {
+        selectedSector !== null && (
+          <div
+            className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all"
+            style={{ background: "rgba(0,0,0,0.6)" }}
+            onClick={() => setSelectedSector(null)}
+          >
+            <FloatingModal
+              sector={selectedSector!}
+              onClose={() => setSelectedSector(null)}
+              onExport={handleExportSuccess}
+              isAdmin={isAdmin}
+              onCreateEmployee={() => {
+                setSelectedSector(null);
+                setShowCreateEmployeeModal(selectedSector!);
+              }}
+              onDeleteEmployee={handleDeleteEmployee}
+              onDeleteSector={handleDeleteSector}
+            />
+          </div>
+        )
+      }
+
+      {/* Tarea: Modal de Exportación Global conectado mediante showExportModal */}
+      {
+        showExportModal && (
+          <div
+            className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all"
+            style={{ background: "rgba(0,0,0,0.6)" }}
+            onClick={() => setShowExportModal(false)}
+          >
+            {/* Reutilizamos el modal para simular el Global Modal con data mock */}
+            <FloatingModal
+              sector={{ id: 99999, apiId: "global", name: "Todos los Sectores", icon: "Building2", employees: sectors.reduce((acc, s) => acc + s.employees, 0), state: "sent", encargado: "N/A", trend: 0 }}
+              onClose={() => setShowExportModal(false)}
+              onExport={handleExportSuccess}
+              isAdmin={isAdmin}
+            />
+          </div>
+        )
+      }
+
+      {/* Step 3: Success Toast Overlay — Figma spec */}
+      {
+        showSuccessToast && (
+          <div
+            className="absolute z-50 transition-all"
+            style={{ bottom: 28, right: 28 }}
+          >
+            <div
+              className="flex items-stretch rounded-2xl overflow-hidden relative"
+              style={{
+                background: "#2A2A3E",
+                border: "1px solid rgba(76,175,80,0.3)",
+                boxShadow: "0 12px 40px rgba(0,0,0,0.55), 0 4px 16px rgba(76,175,80,0.15)",
+                minWidth: 340,
+              }}
+            >
+              {/* Left accent bar */}
+              <div style={{ width: 4, background: "#4CAF50", flexShrink: 0 }} />
+              {/* Content */}
+              <div className="flex items-center gap-3.5 px-4 py-4 flex-1">
+                <div className="flex items-center justify-center rounded-full flex-shrink-0"
+                  style={{ width: 36, height: 36, background: "rgba(76,175,80,0.15)" }}>
+                  <CheckCircle2 size={20} color="#4CAF50" />
+                </div>
+                <div className="flex-1">
+                  <p className="text-white" style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>Exportación Correcta</p>
+                  <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>El archivo Excel se generó exitosamente.</p>
+                </div>
+                <button onClick={() => setShowSuccessToast(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, lineHeight: 0, flexShrink: 0 }}>
+                  <X size={14} color="rgba(255,255,255,0.35)" />
+                </button>
+              </div>
+              {/* Bottom progress bar */}
+              <div className="absolute bottom-0 left-0 right-0" style={{ height: 2 }}>
+                <div className="h-full" style={{ background: "#4CAF50", animation: "progress 3s linear forwards" }} />
+              </div>
+            </div>
+            <style dangerouslySetInnerHTML={{ __html: `@keyframes progress { from { width: 100%; } to { width: 0%; } }` }} />
+          </div>
+        )
+      }
+
+      {/* Login Modal Overlay */}
+      {
+        !isLoggedIn && (
+          <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
+            <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
+              <h2 className="text-white mb-6 text-center" style={{ fontSize: 24, fontWeight: 800 }}>Iniciar Sesión</h2>
+
+              <input
+                type="text"
+                placeholder="Usuario"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                onKeyDown={handleLoginKeyDown}
+                className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none"
+                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 15 }}
+              />
+
+              <input
+                type="password"
+                placeholder="Contraseña"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={handleLoginKeyDown}
+                className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none"
+                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 15 }}
+              />
+
+              <div className="flex items-center gap-3 mb-6">
+                <input
+                  type="checkbox"
+                  checked={keepLoggedIn}
+                  onChange={(e) => setKeepLoggedIn(e.target.checked)}
+                  style={{ width: 16, height: 16, cursor: "pointer", accentColor: "#9C27B0" }}
+                />
+                <span className="text-white/70" style={{ fontSize: 14 }}>Mantener sesión iniciada</span>
+              </div>
+
+              {loginError && (
+                <p className="mb-4 text-center" style={{ color: "#FF5252", fontSize: 13, fontWeight: 600 }}>{loginErrorMsg || "Usuario o contraseña incorrectos"}</p>
+              )}
+
+              <button
+                onClick={attemptLogin}
+                disabled={isLoggingIn}
+                className="w-full py-3.5 rounded-xl transition-all hover:opacity-90 active:scale-[0.98] mt-2"
+                style={{ background: isLoggingIn ? "#666" : "linear-gradient(135deg, #9C27B0, #26C6DA)", border: "none", cursor: isLoggingIn ? "not-allowed" : "pointer", boxShadow: isLoggingIn ? "none" : "0 6px 22px rgba(156,39,176,0.35)", color: "#fff", fontSize: 15, fontWeight: 700 }}
+              >
+                {isLoggingIn ? "Cargando..." : "Ingresar"}
+              </button>
+            </div>
+          </div>
+        )
+      }
+
+      {/* Creation Modals (Admin privileges only) */}
+      {showCreateAdminModal && isAdmin && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
+          <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
+            <button onClick={() => setShowCreateAdminModal(false)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/10 transition-colors cursor-pointer" style={{ background: "transparent", border: "none" }}>
+              <X size={16} color="rgba(255,255,255,0.6)" />
+            </button>
+            <h2 className="text-white mb-6" style={{ fontSize: 20, fontWeight: 800 }}>Crear Usuario Admin</h2>
+            <input type="text" placeholder="Usuario" value={newAdminUser} onChange={(e) => setNewAdminUser(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
+            <input type="password" placeholder="Contraseña" value={newAdminPass} onChange={(e) => setNewAdminPass(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
+            {creationError && <p className="mb-4" style={{ color: "#FF5252", fontSize: 13, fontWeight: 600 }}>{creationError}</p>}
+            <button onClick={handleCreateAdmin} disabled={creationLoading} className="w-full py-3.5 rounded-xl transition-all hover:opacity-90 active:scale-[0.98] mt-2 text-white font-bold" style={{ background: creationLoading ? "#666" : "linear-gradient(135deg, #4CAF50, #2E7D32)", border: "none", cursor: creationLoading ? "not-allowed" : "pointer" }}>
+              {creationLoading ? "Creando..." : "Crear Usuario"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showCreateSectorModal && isAdmin && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
+          <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
+            <button onClick={() => setShowCreateSectorModal(false)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/10 transition-colors cursor-pointer" style={{ background: "transparent", border: "none" }}>
+              <X size={16} color="rgba(255,255,255,0.6)" />
+            </button>
+            <h2 className="text-white mb-6" style={{ fontSize: 20, fontWeight: 800 }}>Crear Nuevo Sector</h2>
+            <input type="text" placeholder="Nombre del Sector" value={newSectorName} onChange={(e) => setNewSectorName(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
+            <input type="text" placeholder="Encargado" value={newSectorEncargado} onChange={(e) => setNewSectorEncargado(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
+            {creationError && <p className="mb-4" style={{ color: "#FF5252", fontSize: 13, fontWeight: 600 }}>{creationError}</p>}
+            <button onClick={handleCreateSector} disabled={creationLoading} className="w-full py-3.5 rounded-xl transition-all hover:opacity-90 active:scale-[0.98] mt-2 text-white font-bold" style={{ background: creationLoading ? "#666" : "linear-gradient(135deg, #4CAF50, #2E7D32)", border: "none", cursor: creationLoading ? "not-allowed" : "pointer" }}>
+              {creationLoading ? "Creando..." : "Crear Sector"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showCreateEmployeeModal && isAdmin && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
+          <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
+            <button onClick={() => setShowCreateEmployeeModal(null)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/10 transition-colors cursor-pointer" style={{ background: "transparent", border: "none" }}>
+              <X size={16} color="rgba(255,255,255,0.6)" />
+            </button>
+            <h2 className="text-white mb-2" style={{ fontSize: 20, fontWeight: 800 }}>Agregar Empleado</h2>
+            <p className="text-white/50 mb-6" style={{ fontSize: 13 }}>Sector: {showCreateEmployeeModal.name}</p>
+            <input type="text" placeholder="Nombre" value={newEmployeeFirst} onChange={(e) => setNewEmployeeFirst(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
+            <input type="text" placeholder="Apellido" value={newEmployeeLast} onChange={(e) => setNewEmployeeLast(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
+            <input type="text" placeholder="DNI" value={newEmployeeDNI} onChange={(e) => setNewEmployeeDNI(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
+            {creationError && <p className="mb-4" style={{ color: "#FF5252", fontSize: 13, fontWeight: 600 }}>{creationError}</p>}
+            <button onClick={handleCreateEmployee} disabled={creationLoading} className="w-full py-3.5 rounded-xl transition-all hover:opacity-90 active:scale-[0.98] mt-2 text-white font-bold" style={{ background: creationLoading ? "#666" : "linear-gradient(135deg, #4CAF50, #2E7D32)", border: "none", cursor: creationLoading ? "not-allowed" : "pointer" }}>
+              {creationLoading ? "Creando..." : "Crear Empleado"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Management Modal */}
+      {showAdminManagement && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all" style={{ background: "rgba(0,0,0,0.6)" }}>
+          <div className="w-[450px] rounded-3xl overflow-hidden flex flex-col" style={{ background: "#2A2A3E", border: "1.5px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
+            <div style={{ height: 4, background: "linear-gradient(90deg, #9C27B0, #26C6DA)" }} />
+            <div className="p-7">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-white font-black text-2xl tracking-tight">Gestionar Usuarios</h3>
+                <button onClick={() => setShowAdminManagement(false)} className="p-2 rounded-xl hover:bg-white/10" style={{ cursor: "pointer", background: "transparent", border: "none" }}><X size={20} color="white" /></button>
+              </div>
+
+              <div className="flex flex-col gap-3 max-h-[300px] overflow-y-auto mb-6 pr-2">
+                {loadingAdmins ? (
+                  <div className="py-10 text-center"><div className="inline-block rounded-full w-8 h-8 border-2 border-white/10 border-t-purple-500 animate-spin" /></div>
+                ) : adminUsers.map((u) => (
+                  <div key={u.id} className="flex items-center justify-between p-4 rounded-2xl" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <div>
+                      <p className="text-white font-bold">{u.username}</p>
+                      <p className="text-white/30 text-[10px] uppercase tracking-wider mt-0.5">ID: {u.id.substring(0, 8)}...</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => { setEditingAdmin(u); setEditAdminUser(u.username); setEditAdminPass(""); }}
+                        className="p-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white"
+                        style={{ cursor: "pointer", background: "transparent", border: "none" }}
+                      >
+                        <Settings size={16} />
+                      </button>
+                      {u.username !== 'admin' && (
+                        <button 
+                          onClick={() => handleDeleteAdmin(u.id)}
+                          className="p-2 rounded-lg hover:bg-red-500/20 text-red-400"
+                          style={{ cursor: "pointer", background: "transparent", border: "none" }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <button 
+                onClick={() => { setShowAdminManagement(false); setShowCreateAdminModal(true); }}
+                className="w-full py-4 rounded-2xl bg-purple-600/10 border border-dashed border-purple-500/40 text-purple-400 font-bold hover:bg-purple-600/20 transition-all mb-4"
+                style={{ cursor: "pointer" }}
+              >
+                + Crear Nuevo Administrador
+              </button>
+            </div>
+          </div>
+
+          {/* Edit Admin Sub-Modal */}
+          {editingAdmin && (
+            <div className="absolute inset-0 z-[60] flex items-center justify-center backdrop-blur-md" style={{ background: "rgba(0,0,0,0.4)" }}>
+              <div className="w-[380px] rounded-3xl p-7 flex flex-col gap-5" style={{ background: "#32324A", border: "1.5px solid rgba(255,255,255,0.15)", boxShadow: "0 20px 50px rgba(0,0,0,0.5)" }}>
+                <h4 className="text-white font-bold text-xl">Editar Usuario</h4>
+                <div className="flex flex-col gap-4">
+                  <div>
+                    <label className="text-white/40 text-[10px] uppercase font-bold mb-1.5 block">Nombre de Usuario</label>
+                    <input value={editAdminUser} onChange={e => setEditAdminUser(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-purple-500/50" />
+                  </div>
+                  <div>
+                    <label className="text-white/40 text-[10px] uppercase font-bold mb-1.5 block">Nueva Contraseña (dejar vacío para no cambiar)</label>
+                    <input type="password" value={editAdminPass} onChange={e => setEditAdminPass(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-purple-500/50" />
+                  </div>
+                </div>
+                <div className="flex gap-3 mt-2">
+                  <button onClick={() => setEditingAdmin(null)} className="flex-1 py-3 text-white/50 font-bold hover:text-white" style={{ cursor: "pointer", background: "transparent", border: "none" }}>Cancelar</button>
+                  <button onClick={handleUpdateAdmin} className="flex-1 py-3 bg-purple-600 rounded-xl text-white font-bold hover:bg-purple-500 transition-all shadow-lg shadow-purple-900/20" style={{ cursor: "pointer", border: "none" }}>Guardar Cambios</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+    </div >
+  );
+}

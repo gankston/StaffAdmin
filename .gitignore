@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-electron
+dist-electron-bin
+*.log
+build_err*.txt
+build_log*.txt
+local_err*.txt
+tsc_out.txt
+ts_errors.txt
+StaffAdmin.zip
