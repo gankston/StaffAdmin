@@ -15,7 +15,7 @@ export interface ExportParams {
         dni?: string | null;
         is_active: boolean;
     }>;
-    attendances?: Array<{    // real attendance rows from /api/attendances
+    attendances?: Array<{    // filas reales de /api/attendances
         employee_id?: string;
         first_name?: string;
         last_name?: string;
@@ -23,6 +23,12 @@ export interface ExportParams {
         date?: string;
         hours?: number | null;
         status?: string | null;
+        [key: string]: any;
+    }>;
+    absences?: Array<{       // ausencias de /api/absences
+        employee_id: string;
+        start_date: string;  // YYYY-MM-DD
+        end_date: string;    // YYYY-MM-DD
         [key: string]: any;
     }>;
     periodMonth: number;
@@ -82,14 +88,31 @@ export async function exportExcel(
 
         // ── Mapeo de Empleados (Filas 5 en adelante) ─────────────────────
         const attendances = params?.attendances ?? [];
+        const absences = params?.absences ?? [];
         const employees = params?.employees ?? [];
+
+        console.log(`[exportExcel] Procesando ${employees.length} empleados, ${attendances.length} asistencias, ${absences.length} ausencias`);
+
+        // Agrupar ausencias por employee_id para lookup O(1)
+        const absencesByEmp = new Map<string, Array<{ start: string; end: string }>>();
+        absences.forEach(a => {
+            const empId = String(a.employee_id);
+            if (!absencesByEmp.has(empId)) absencesByEmp.set(empId, []);
+            absencesByEmp.get(empId)!.push({ start: a.start_date, end: a.end_date });
+        });
 
         // 2. Iterar sobre los empleados y agregarlos a la matriz
         employees.forEach((emp, index) => {
             let totalHorasEmpleado = 0;
             const empAtts = attendances.filter(a => String(a.employee_id) === String(emp.id) || (emp.dni && a.dni === emp.dni));
+            const empAbsences = absencesByEmp.get(emp.id) ?? [];
 
             const horasDelEmpleado = dateStrings.map(dateStr => {
+                // PRIORIDAD 1: ausencia registrada que cubre este día → AUSENTE
+                const isAbsent = empAbsences.some(abs => abs.start <= dateStr && dateStr <= abs.end);
+                if (isAbsent) return 'AUSENTE';
+
+                // PRIORIDAD 2: asistencia registrada
                 const att = empAtts.find(a => a.date && a.date.startsWith(dateStr));
                 if (att) {
                     if (att.status === 'Faltante') {

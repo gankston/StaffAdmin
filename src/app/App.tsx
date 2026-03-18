@@ -191,12 +191,18 @@ interface Employee {
   is_active: boolean;
 }
 
-function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, onDeleteEmployee, onDeleteSector }: { sector: Sector; onClose: () => void; onExport: () => void; isAdmin: boolean; onCreateEmployee?: () => void; onDeleteEmployee?: (id: string) => Promise<void>; onDeleteSector?: (id: string) => Promise<void> }) {
+
+function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, onDeleteEmployee, onDeleteSector, setShowConfirmDelete }: { sector: Sector; onClose: () => void; onExport: () => void; isAdmin: boolean; onCreateEmployee?: () => void; onDeleteEmployee?: (id: string) => Promise<boolean>; onDeleteSector?: (id: string) => Promise<boolean>; setShowConfirmDelete: (val: any) => void }) {
   const [showTooltip, setShowTooltip] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [empLoading, setEmpLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [absentEmployeeIds, setAbsentEmployeeIds] = useState<Set<string>>(new Set());
+  const [absenceLoading, setAbsenceLoading] = useState(false);
   const isMissing = sector.state === "missing";
+
+  // Fecha de hoy en formato YYYY-MM-DD
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   // ── Period state: default = current month/year ───────────────────────────
   const now = new Date();
@@ -209,29 +215,51 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     if (exporting || !window.electronAPI?.exportExcel) return;
     setExporting(true);
     try {
-      // 1. Calculate period date range in YYYY-MM-DD format
+      // 1. Período 21→20
       const fromMonth = periodMonth === 1 ? 12 : periodMonth - 1;
       const fromYear = periodMonth === 1 ? periodYear - 1 : periodYear;
       const startDate = `${fromYear}-${String(fromMonth).padStart(2, '0')}-21`;
       const endDate = `${periodYear}-${String(periodMonth).padStart(2, '0')}-20`;
 
-      // 2. Fetch real attendances for this sector + period
+      const adminToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+
+      // 2. Fetch asistencias del período
       let attendances: any[] = [];
       if (window.electronAPI?.getAttendances) {
         console.log(`[Export] Consultando asistencias: ${sector.apiId} ${startDate} → ${endDate}`);
-        attendances = await window.electronAPI.getAttendances(sector.apiId, startDate, endDate);
+        attendances = await window.electronAPI.getAttendances(sector.apiId, startDate, endDate, adminToken);
         console.log(`[Export] Asistencias recibidas: ${attendances.length}`);
       }
 
-      // 3. Generate Excel with real data
+      // 3. Fetch ausencias del mismo período desde /api/absences
+      let absences: any[] = [];
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
+        const absUrl = `https://staffaxis-api-prod.pgastonor.workers.dev/api/absences?sector_id=${encodeURIComponent(sector.apiId)}&start_date=${startDate}&end_date=${endDate}`;
+        const absRes = await fetch(absUrl, { headers });
+        if (absRes.ok) {
+          const absData = await absRes.json();
+          absences = absData.absences ?? [];
+          console.log(`[Export] Ausencias del período: ${absences.length}`);
+        }
+      } catch (absErr) {
+        console.warn('[Export] No se pudieron cargar ausencias:', absErr);
+      }
+
+      console.log(`[Export] Datos para excel: ${employees.length} empleados, ${attendances.length} asistencias, ${absences.length} ausencias`);
+
+      // 4. Generar Excel con asistencias + ausencias
       const result = await window.electronAPI.exportExcel({
         sectorName: sector.name,
         encargado: sector.encargado,
         employees: employees,
-        attendances: attendances,     // real attendance rows
+        attendances: attendances,
+        absences: absences,          // ← nuevo: ausencias del período
         periodMonth,
         periodYear,
       });
+
 
       if (result.success && result.base64) {
         // Convert base64 to Blob
@@ -269,24 +297,50 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     }
   };
 
-  // useEffect: re-triggers when selectedSectorId changes (triggered by sector prop)
+  // useEffect: carga empleados y ausencias del día
   useEffect(() => {
     setEmpLoading(true);
     setEmployees([]);
+    setAbsentEmployeeIds(new Set());
+    
     if (window.electronAPI?.getEmployees) {
       window.electronAPI.getEmployees(sector.apiId)
-        .then((data: Employee[]) => {
-          console.log('Cargando empleados del sector:', sector.apiId);
-          console.log('Empleados recibidos:', data);
-          console.log('Empleados cargados:', data.length);
-          setEmployees(data);
+        .then((empData: any) => {
+          console.log('Cargando datos del sector:', sector.apiId);
+          setEmployees(empData);
         })
-        .catch((err: unknown) => console.error('[FloatingModal] employee fetch failed:', err))
+        .catch((err: unknown) => console.error('[FloatingModal] fetch failed:', err))
         .finally(() => setEmpLoading(false));
     } else {
       setEmpLoading(false);
     }
-  }, [sector.apiId]);
+
+    // Fetch ausencias del día para cruzar con empleados
+    const fetchAbsences = async () => {
+      setAbsenceLoading(true);
+      try {
+        const rawToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+        const token = rawToken === "undefined" ? "" : rawToken;
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+
+        const url = `https://staffaxis-api-prod.pgastonor.workers.dev/api/absences?sector_id=${encodeURIComponent(sector.apiId)}&start_date=${todayStr}&end_date=${todayStr}`;
+        const res = await fetch(url, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          const absences: any[] = data.absences ?? [];
+          const ids = new Set<string>(absences.map((a: any) => a.employee_id as string));
+          setAbsentEmployeeIds(ids);
+          console.log(`[Ausencias] ${ids.size} ausente(s) en ${sector.apiId} para ${todayStr}`);
+        }
+      } catch (err) {
+        console.error('[Ausencias] fetch error:', err);
+      } finally {
+        setAbsenceLoading(false);
+      }
+    };
+    fetchAbsences();
+  }, [sector.apiId, todayStr]);
 
   return (
     <div
@@ -316,48 +370,35 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
           </div>
           <div className="flex items-center gap-2">
             {isAdmin && onDeleteSector && (
-              <button 
+              <button
                 onClick={() => {
-                  if(confirm(`¿ELIMINAR TODO EL SECTOR "${sector.name.toUpperCase()}"?\n\nEsta acción borrará también a todos los empleados de este sector y no se puede deshacer.`)) {
-                    onDeleteSector(sector.apiId).then(() => onClose());
-                  }
+                  setShowConfirmDelete({
+                    type: 'sector',
+                    id: sector.apiId,
+                    name: sector.name,
+                    onConfirm: async () => {
+                      if (onDeleteSector) {
+                        const ok = await onDeleteSector(sector.apiId);
+                        if (ok) onClose();
+                      }
+                    }
+                  });
                 }}
-                className="flex items-center justify-center rounded-xl transition-all hover:bg-red-500/20 active:scale-95 group"
-                style={{ width: 42, height: 42, background: "rgba(255,82,82,0.1)", border: "1px solid rgba(255,82,82,0.2)", cursor: "pointer" }}
+                className="flex items-center justify-center rounded-xl transition-all hover:bg-red-500/20 active:scale-95"
+                style={{ width: 36, height: 36, background: "rgba(255,82,82,0.1)", border: "1px solid rgba(255,82,82,0.2)", cursor: "pointer" }}
                 title="Eliminar Sector"
               >
-                <Trash2 size={18} color="#FF5252" />
+                <Trash2 size={16} color="#FF5252" />
               </button>
             )}
             <button
-              onClick={handleExport}
-              onMouseEnter={() => isMissing && setShowTooltip(true)}
-              onMouseLeave={() => setShowTooltip(false)}
-              className="flex items-center justify-center rounded-xl transition-all hover:bg-white/10 active:scale-95 relative"
-              style={{ 
-                width: 42, 
-                height: 42, 
-                background: exporting ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.05)", 
-                border: "1px solid rgba(255,255,255,0.1)", 
-                cursor: exporting || isMissing ? "not-allowed" : "pointer",
-                opacity: isMissing ? 0.3 : 1
-              }}
-              disabled={exporting || isMissing}
+              onClick={onClose}
+              className="flex items-center justify-center rounded-xl transition-colors hover:bg-white/10"
+              style={{ width: 34, height: 34, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer", flexShrink: 0 }}
             >
-              {exporting ? (
-                <div className="rounded-full flex-shrink-0" style={{ width: 18, height: 18, border: "2px solid rgba(255,255,255,0.1)", borderTop: "2px solid #C86FE8", animation: "spin 0.8s linear infinite" }} />
-              ) : (
-                <Download size={18} color="rgba(255,255,255,0.7)" />
-              )}
+              <X size={15} color="rgba(255,255,255,0.6)" />
             </button>
           </div>
-          <button
-            onClick={onClose}
-            className="flex items-center justify-center rounded-xl transition-colors hover:bg-white/10"
-            style={{ width: 34, height: 34, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer", flexShrink: 0 }}
-          >
-            <X size={15} color="rgba(255,255,255,0.6)" />
-          </button>
         </div>
 
         {/* Stats counters — driven by real employee data once API endpoint is live */}
@@ -389,7 +430,20 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
 
         {/* Employee List — fetched via useEffect on sector.apiId */}
         <div className="mb-5">
-          <p className="text-white/40 font-semibold uppercase tracking-wider mb-3" style={{ fontSize: 10 }}>Empleados del Sector</p>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-white/40 font-semibold uppercase tracking-wider" style={{ fontSize: 10 }}>Empleados del Sector</p>
+            {absenceLoading && (
+              <div className="flex items-center gap-1.5">
+                <div className="rounded-full" style={{ width: 10, height: 10, border: "1.5px solid rgba(255,82,82,0.2)", borderTop: "1.5px solid #FF5252", animation: "spin 0.8s linear infinite" }} />
+                <span style={{ fontSize: 9, color: "rgba(255,82,82,0.6)", fontWeight: 600, letterSpacing: "0.05em" }}>VERIFICANDO AUSENCIAS</span>
+              </div>
+            )}
+            {!absenceLoading && absentEmployeeIds.size > 0 && (
+              <span style={{ fontSize: 9, fontWeight: 700, color: "#FF5252", letterSpacing: "0.04em", background: "rgba(255,82,82,0.1)", padding: "2px 8px", borderRadius: 999, border: "1px solid rgba(255,82,82,0.3)" }}>
+                {absentEmployeeIds.size} AUSENTE{absentEmployeeIds.size > 1 ? "S" : ""}
+              </span>
+            )}
+          </div>
           {empLoading ? (
             <div className="flex items-center gap-3 py-3">
               <div className="rounded-full flex-shrink-0" style={{ width: 18, height: 18, border: "2px solid rgba(255,255,255,0.1)", borderTop: "2px solid #9C27B0", animation: "spin 0.8s linear infinite" }} />
@@ -401,39 +455,82 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
             </div>
           ) : (
             <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
-              {employees.map((emp) => (
-                <div key={emp.id} className="flex items-center justify-between rounded-xl px-3.5 py-2.5 hover:bg-white/5 transition-colors" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 28, height: 28, background: "rgba(156,39,176,0.18)", color: "#C86FE8", fontSize: 11, fontWeight: 700 }}>
-                      {emp.first_name.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <p className="text-white" style={{ fontSize: 12, fontWeight: 600 }}>{emp.first_name} {emp.last_name}</p>
-                      {emp.dni && <p className="text-white/35" style={{ fontSize: 10 }}>DNI: {emp.dni}</p>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-full" style={{ fontSize: 10, fontWeight: 600, background: emp.is_active ? "rgba(76,175,80,0.15)" : "rgba(255,82,82,0.15)", color: emp.is_active ? "#4CAF50" : "#FF5252" }}>
-                      {emp.is_active ? "Activo" : "Inactivo"}
-                    </span>
-                    {isAdmin && onDeleteEmployee && (
-                      <button 
-                        onClick={() => {
-                          if(confirm(`¿Eliminar a ${emp.first_name} ${emp.last_name}?`)) {
-                            onDeleteEmployee(emp.id).then(() => {
-                              setEmployees(prev => prev.filter(e => e.id !== emp.id));
-                            });
-                          }
+              {employees.map((emp) => {
+                const isAbsent = absentEmployeeIds.has(emp.id);
+                return (
+                  <div
+                    key={emp.id}
+                    className="flex items-center justify-between rounded-xl px-3.5 py-2.5 transition-colors"
+                    style={{
+                      background: isAbsent ? "rgba(255,82,82,0.12)" : "rgba(255,255,255,0.04)",
+                      border: isAbsent ? "1px solid rgba(255,82,82,0.4)" : "1px solid rgba(255,255,255,0.06)",
+                    }}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className="flex items-center justify-center rounded-full flex-shrink-0"
+                        style={{
+                          width: 28, height: 28,
+                          background: isAbsent ? "rgba(255,82,82,0.2)" : "rgba(156,39,176,0.18)",
+                          color: isAbsent ? "#FF5252" : "#C86FE8",
+                          fontSize: 11, fontWeight: 700
                         }}
-                        className="p-1.5 rounded-lg hover:bg-red-500/20 transition-colors"
-                        style={{ cursor: "pointer", color: "#FF5252" }}
                       >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
+                        {emp.first_name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <p style={{ fontSize: 12, fontWeight: 600, color: isAbsent ? "#ffaaaa" : "white" }}>
+                          {emp.first_name} {emp.last_name}
+                        </p>
+                        {emp.dni && <p style={{ fontSize: 10, color: isAbsent ? "rgba(255,150,150,0.5)" : "rgba(255,255,255,0.35)" }}>DNI: {emp.dni}</p>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {isAbsent && (
+                        <span
+                          className="px-2 py-0.5 rounded-full flex items-center gap-1"
+                          style={{ fontSize: 10, fontWeight: 700, background: "rgba(255,82,82,0.25)", color: "#FF5252", border: "1px solid rgba(255,82,82,0.4)", letterSpacing: "0.04em" }}
+                        >
+                          <AlertCircle size={9} />
+                          AUSENTE
+                        </span>
+                      )}
+                      {!isAbsent && (
+                        emp.is_active ? (
+                          <span className="px-2 py-0.5 rounded-full" style={{ fontSize: 10, fontWeight: 600, background: "rgba(76,175,80,0.15)", color: "#4CAF50" }}>
+                            Activo
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full" style={{ fontSize: 10, fontWeight: 600, background: "rgba(255,82,82,0.15)", color: "#FF5252" }}>
+                            Inactivo
+                          </span>
+                        )
+                      )}
+                      {isAdmin && onDeleteEmployee && (
+                        <button
+                          onClick={() => {
+                            setShowConfirmDelete({
+                              type: 'employee',
+                              id: emp.id,
+                              name: `${emp.first_name} ${emp.last_name}`,
+                              onConfirm: async () => {
+                                if (onDeleteEmployee) {
+                                  const ok = await onDeleteEmployee(emp.id);
+                                  if (ok) setEmployees(prev => prev.filter(e => e.id !== emp.id));
+                                }
+                              }
+                            });
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-red-500/20 transition-colors"
+                          style={{ cursor: "pointer", color: "#FF5252" }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -510,7 +607,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
             <button
               onClick={handleExport}
               // Eliminamos booleanos de disabled para probar el modal con click siempre
-              disabled={exporting}
+              disabled={exporting || empLoading}
               className={`flex items-center justify-center gap-2.5 w-full py-3.5 rounded-2xl transition-all ${!exporting ? 'hover:opacity-90 active:scale-[0.98]' : 'opacity-50 cursor-not-allowed'}`}
               style={{ background: "linear-gradient(135deg, #4CAF50, #2E7D32)", border: "none", cursor: exporting ? "not-allowed" : "pointer", boxShadow: "0 6px 22px rgba(76,175,80,0.3)" }}
             >
@@ -519,14 +616,6 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
                 : <><FileSpreadsheet size={16} color="#fff" /><span className="text-white" style={{ fontSize: 13, fontWeight: 700 }}>Exportar en Excel</span></>}
             </button>
           </div>
-
-          <button
-            className="flex items-center justify-center gap-2.5 w-full py-3.5 rounded-2xl transition-all hover:bg-white/10"
-            style={{ background: "rgba(255,255,255,0.06)", border: "1.5px solid rgba(255,255,255,0.11)", cursor: "pointer" }}
-          >
-            <BarChart2 size={16} color="rgba(255,255,255,0.7)" />
-            <span className="text-white" style={{ fontSize: 13, fontWeight: 600 }}>Ver estadísticas</span>
-          </button>
         </div>
       </div>
     </div>
@@ -579,6 +668,8 @@ export default function App() {
   const [editingAdmin, setEditingAdmin] = useState<any | null>(null);
   const [editAdminUser, setEditAdminUser] = useState("");
   const [editAdminPass, setEditAdminPass] = useState("");
+
+  const [showConfirmDelete, setShowConfirmDelete] = useState<{ type: 'employee' | 'sector' | 'admin', id: string, name: string, sectorId?: string, onConfirm?: () => Promise<void> } | null>(null);
 
   const getAdminUsername = () => {
     try {
@@ -816,8 +907,13 @@ export default function App() {
       if (!res.ok) {
         const d = await res.json();
         alert(d.error || "Error al eliminar empleado");
+        return false;
       }
-    } catch (e) { alert("Error de conexión"); }
+      return true;
+    } catch (e) { 
+      alert("Error de conexión"); 
+      return false;
+    }
   };
 
   const handleDeleteSector = async (id: string) => {
@@ -828,11 +924,16 @@ export default function App() {
       });
       if (res.ok) {
         loadSectors(true);
+        return true;
       } else {
         const d = await res.json();
         alert(d.error || "Error al eliminar sector");
+        return false;
       }
-    } catch (e) { alert("Error de conexión"); }
+    } catch (e) { 
+      alert("Error de conexión"); 
+      return false;
+    }
   };
 
   const handleFetchAdmins = async () => {
@@ -869,7 +970,7 @@ export default function App() {
   };
 
   const handleDeleteAdmin = async (id: string) => {
-    if (!confirm("¿Eliminar este administrador?")) return;
+    // Handled by custom confirm modal
     setLoadingAdmins(true);
     try {
       const res = await fetch(`https://staffaxis-api-prod.pgastonor.workers.dev/api/admin-users/${id}`, {
@@ -878,11 +979,14 @@ export default function App() {
       });
       if (res.ok) {
         handleFetchAdmins();
+        setLoadingAdmins(false);
+        return true;
       } else {
         const d = await res.json(); alert(d.error || "Error al eliminar");
       }
     } catch (e) { alert("Error de conexión"); }
     setLoadingAdmins(false);
+    return false;
   };
 
   useEffect(() => {
@@ -993,7 +1097,7 @@ export default function App() {
                   {isAdmin && (
                     <>
                       <button
-                        onClick={() => { setShowSettingsMenu(false); setShowCreateAdminModal(true); setCreationError(""); }}
+                        onClick={() => { setShowSettingsMenu(false); setShowCreateSectorModal(true); setCreationError(""); }}
                         className="w-full text-left px-5 py-3 text-white transition-colors hover:bg-white/10"
                         style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none" }}
                       >
@@ -1053,18 +1157,6 @@ export default function App() {
             <div className="flex items-center justify-between mb-6">
               <p className="text-white/50 font-semibold uppercase tracking-wider" style={{ fontSize: 11 }}>Panel de Sectores</p>
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => {
-                    console.log('Botón de exportar presionado');
-                    setShowExportModal(true);
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all hover:opacity-90 active:scale-95"
-                  style={{ background: "linear-gradient(135deg, #FF5252, #D32F2F)", border: "none", cursor: "pointer", boxShadow: "0 6px 16px rgba(255,82,82,0.3)" }}
-                  title="Exportar Todos los Datos"
-                >
-                  <FileSpreadsheet size={14} color="#fff" />
-                  <span className="text-white font-bold" style={{ fontSize: 13 }}>Exportar General</span>
-                </button>
                 <button
                   onClick={() => loadSectors(true)}
                   disabled={isLoading}
@@ -1133,7 +1225,7 @@ export default function App() {
       {
         selectedSector !== null && (
           <div
-            className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all"
+            className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all"
             style={{ background: "rgba(0,0,0,0.6)" }}
             onClick={() => setSelectedSector(null)}
           >
@@ -1148,6 +1240,7 @@ export default function App() {
               }}
               onDeleteEmployee={handleDeleteEmployee}
               onDeleteSector={handleDeleteSector}
+              setShowConfirmDelete={setShowConfirmDelete}
             />
           </div>
         )
@@ -1167,6 +1260,7 @@ export default function App() {
               onClose={() => setShowExportModal(false)}
               onExport={handleExportSuccess}
               isAdmin={isAdmin}
+              setShowConfirmDelete={setShowConfirmDelete}
             />
           </div>
         )
@@ -1276,7 +1370,7 @@ export default function App() {
               <X size={16} color="rgba(255,255,255,0.6)" />
             </button>
             <h2 className="text-white mb-6" style={{ fontSize: 20, fontWeight: 800 }}>Crear Usuario Admin</h2>
-            <input type="text" placeholder="Usuario" value={newAdminUser} onChange={(e) => setNewAdminUser(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
+            <input autoFocus type="text" placeholder="Usuario" value={newAdminUser} onChange={(e) => setNewAdminUser(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
             <input type="password" placeholder="Contraseña" value={newAdminPass} onChange={(e) => setNewAdminPass(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
             {creationError && <p className="mb-4" style={{ color: "#FF5252", fontSize: 13, fontWeight: 600 }}>{creationError}</p>}
             <button onClick={handleCreateAdmin} disabled={creationLoading} className="w-full py-3.5 rounded-xl transition-all hover:opacity-90 active:scale-[0.98] mt-2 text-white font-bold" style={{ background: creationLoading ? "#666" : "linear-gradient(135deg, #4CAF50, #2E7D32)", border: "none", cursor: creationLoading ? "not-allowed" : "pointer" }}>
@@ -1293,7 +1387,7 @@ export default function App() {
               <X size={16} color="rgba(255,255,255,0.6)" />
             </button>
             <h2 className="text-white mb-6" style={{ fontSize: 20, fontWeight: 800 }}>Crear Nuevo Sector</h2>
-            <input type="text" placeholder="Nombre del Sector" value={newSectorName} onChange={(e) => setNewSectorName(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
+            <input autoFocus type="text" placeholder="Nombre del Sector" value={newSectorName} onChange={(e) => setNewSectorName(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
             <input type="text" placeholder="Encargado" value={newSectorEncargado} onChange={(e) => setNewSectorEncargado(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
             {creationError && <p className="mb-4" style={{ color: "#FF5252", fontSize: 13, fontWeight: 600 }}>{creationError}</p>}
             <button onClick={handleCreateSector} disabled={creationLoading} className="w-full py-3.5 rounded-xl transition-all hover:opacity-90 active:scale-[0.98] mt-2 text-white font-bold" style={{ background: creationLoading ? "#666" : "linear-gradient(135deg, #4CAF50, #2E7D32)", border: "none", cursor: creationLoading ? "not-allowed" : "pointer" }}>
@@ -1311,7 +1405,7 @@ export default function App() {
             </button>
             <h2 className="text-white mb-2" style={{ fontSize: 20, fontWeight: 800 }}>Agregar Empleado</h2>
             <p className="text-white/50 mb-6" style={{ fontSize: 13 }}>Sector: {showCreateEmployeeModal.name}</p>
-            <input type="text" placeholder="Nombre" value={newEmployeeFirst} onChange={(e) => setNewEmployeeFirst(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
+            <input autoFocus type="text" placeholder="Nombre" value={newEmployeeFirst} onChange={(e) => setNewEmployeeFirst(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
             <input type="text" placeholder="Apellido" value={newEmployeeLast} onChange={(e) => setNewEmployeeLast(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
             <input type="text" placeholder="DNI" value={newEmployeeDNI} onChange={(e) => setNewEmployeeDNI(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
             {creationError && <p className="mb-4" style={{ color: "#FF5252", fontSize: 13, fontWeight: 600 }}>{creationError}</p>}
@@ -1352,7 +1446,16 @@ export default function App() {
                       </button>
                       {u.username !== 'admin' && (
                         <button 
-                          onClick={() => handleDeleteAdmin(u.id)}
+                          onClick={() => {
+                            setShowConfirmDelete({ 
+                              type: 'admin', 
+                              id: u.id, 
+                              name: u.username,
+                              onConfirm: async () => {
+                                await handleDeleteAdmin(u.id);
+                              }
+                            });
+                          }}
                           className="p-2 rounded-lg hover:bg-red-500/20 text-red-400"
                           style={{ cursor: "pointer", background: "transparent", border: "none" }}
                         >
@@ -1396,6 +1499,45 @@ export default function App() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {showConfirmDelete && (
+        <div className="absolute inset-0 z-[200] flex items-center justify-center p-4 backdrop-blur-md" style={{ background: "rgba(0,0,0,0.7)" }}>
+          <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1.5px solid rgba(255,82,82,0.3)", boxShadow: "0 32px 80px rgba(0,0,0,0.8)" }}>
+            <div className="flex items-center justify-center w-14 h-14 rounded-full bg-red-500/10 mb-6 mx-auto">
+              <Trash2 size={28} color="#FF5252" />
+            </div>
+            <h2 className="text-white mb-2 text-center" style={{ fontSize: 20, fontWeight: 800 }}>Finalizar Eliminación</h2>
+            <p className="text-white/60 mb-8 text-center" style={{ fontSize: 14, lineHeight: 1.5 }}>
+              ¿Estás seguro que deseas eliminar <strong>{showConfirmDelete.name}</strong>?<br/>
+              {showConfirmDelete.type === 'sector' && <span className="text-red-400/80 text-[11px] font-bold mt-2 inline-block">ESTA ACCIÓN ELIMINARÁ TAMBIÉN TODOS SUS EMPLEADOS.</span>}
+              {showConfirmDelete.type !== 'sector' && "Esta acción no se puede deshacer."}
+            </p>
+            
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setShowConfirmDelete(null)}
+                className="flex-1 py-3.5 rounded-xl text-white/50 font-bold hover:bg-white/5 transition-all"
+                style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer" }}
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={async () => {
+                  if (showConfirmDelete.onConfirm) {
+                    await showConfirmDelete.onConfirm();
+                  }
+                  setShowConfirmDelete(null);
+                }}
+                className="flex-1 py-3.5 rounded-xl bg-red-500 text-white font-bold hover:bg-red-600 transition-all shadow-lg shadow-red-900/20"
+                style={{ border: "none", cursor: "pointer" }}
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -269,19 +269,25 @@ export async function fetchEmployees(sectorId: string): Promise<ApiEmployee[]> {
 export async function fetchAttendances(
     sectorId: string,
     startDate: string,   // format: "YYYY-MM-DD"  (e.g. "2026-02-21")
-    endDate: string      // format: "YYYY-MM-DD"  (e.g. "2026-03-20")
+    endDate: string,     // format: "YYYY-MM-DD"  (e.g. "2026-03-20")
+    adminToken?: string  // optional admin token for authorization
 ): Promise<ApiAttendance[]> {
     try {
         const url = `${API_BASE}/api/attendances?sector_id=${encodeURIComponent(sectorId)}&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
         console.log(`[fetchAttendances] GET ${url}`);
 
+        const headers: Record<string, string> = {
+            'Accept': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+        };
+        if (adminToken) {
+            headers['Authorization'] = `Bearer ${adminToken}`;
+        }
+
         const response = await fetch(url, {
             method: 'GET',
-            headers: {
-                'Accept': 'application/json',
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
-                'Pragma': 'no-cache',
-            },
+            headers
         });
 
         if (!response.ok) {

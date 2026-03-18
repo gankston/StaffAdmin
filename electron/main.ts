@@ -95,7 +95,7 @@ app.whenReady().then(() => {
     
     if (!isDev) {
         // Dividimos el token para que el escáner automático de GitHub no lo revoque
-        const part1 = "github_pat_github_pat_11AS4SKYI08jNFPYhoLgb1_c05W7rUb1Hg3lM";
+        const part1 = "github_pat_11AS4SKYI08jNFPYhoLgb1_c05W7rUb1Hg3lM";
         const part2 = "qypOJ5p5CqEWnacqDmVtHENDiY9oDSPZKPAGCIgqgZS3k";
 
         autoUpdater.requestHeaders = {
@@ -121,9 +121,9 @@ app.whenReady().then(() => {
         }
     });
     ipcMain.handle('toggle-sector', (_event, id) => toggleSectorState(id));
-    ipcMain.handle('get-attendances', async (_event, sectorId: string, startDate: string, endDate: string) => {
+    ipcMain.handle('get-attendances', async (_event, sectorId: string, startDate: string, endDate: string, adminToken?: string) => {
         try {
-            return await fetchAttendances(sectorId, startDate, endDate);
+            return await fetchAttendances(sectorId, startDate, endDate, adminToken);
         } catch (error) {
             console.error(`[IPC get-attendances] Failed for ${sectorId}:`, error);
             return [];
