@@ -1,11 +1,5 @@
 import { useState, useRef, useEffect } from "react";
 
-declare global {
-  interface Window {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    electronAPI: any;
-  }
-}
 
 import {
   ChevronDown,
@@ -115,26 +109,29 @@ function SectorDropdown({ value, onChange, sectors }: { value: string; onChange:
   );
 }
 
-function StatsCard({ filter, sectors }: { filter: string, sectors: Sector[] }) {
-  // Filter applies only to this stats card (Tarea 3: real counts from API data)
-  const src = filter === "Todos" ? sectors : sectors.filter((s) => s.name === filter);
+function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: Sector[], globalStats: any }) {
+  const isGlobal = filter === "Todos";
+  const src = isGlobal ? sectors : sectors.filter((s) => s.name === filter);
+  
   const totalEmpleados = src.reduce((a, c) => a + c.employees, 0);
-  // Activos = all employees (is_active is not known at sector level, only in modal)
-  // Registros and Horas come from /api/attendances (endpoint pending)
-  const totalRegistros = totalEmpleados; // placeholder: 1 registro por empleado
-  const ausentes = 0;  // pending /api/attendances
-  const horasTotales = 0; // pending /api/attendances
+  const numEncargados = new Set(src.map(s => s.encargado).filter(Boolean)).size;
+  
+  // Si no estamos en "Todos", usamos lo que sabemos (empleados). Las horas/ausentes globales no aplicarían directamente.
+  const ausentes = isGlobal ? globalStats.ausentes : "N/A";
+  const activos = isGlobal ? Math.max(0, totalEmpleados - globalStats.ausentes) : totalEmpleados;
+  const totales = totalEmpleados + numEncargados;
+  const horasTotales = isGlobal ? globalStats.horasTotales : "N/A";
 
   return (
     <div className="p-6 rounded-[16px]" style={{ background: "linear-gradient(135deg, #9C27B0 0%, #26C6DA 100%)", boxShadow: "0 12px 32px rgba(156,39,176,0.25)" }}>
       <h2 className="text-white mb-6" style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.01em" }}>Estadísticas del Período</h2>
       <div className="grid grid-cols-2 gap-y-6 gap-x-4">
-        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Total Registros</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{totalRegistros.toLocaleString("es")}</p></div>
-        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Empleados</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{totalEmpleados.toLocaleString("es")}</p></div>
-        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Activos</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{totalEmpleados.toLocaleString("es")}</p></div>
+        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Total Registrados</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{totalEmpleados.toLocaleString("es")}</p></div>
+        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Encargados</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{numEncargados}</p></div>
+        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Activos</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{activos}</p></div>
         <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Ausentes</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{ausentes}</p></div>
-        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Totales</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{totalEmpleados.toLocaleString("es")}</p></div>
-        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Horas Totales</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{horasTotales > 0 ? horasTotales.toLocaleString("es") : "—"}</p></div>
+        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Totales</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{totales.toLocaleString("es")}</p></div>
+        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Horas Totales</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{horasTotales !== "N/A" ? parseFloat(Number(horasTotales).toPrecision(4)).toLocaleString("es") : "N/A"}</p></div>
       </div>
     </div>
   );
@@ -204,10 +201,14 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
   // Fecha de hoy en formato YYYY-MM-DD
   const todayStr = new Date().toISOString().slice(0, 10);
 
-  // ── Period state: default = current month/year ───────────────────────────
-  const now = new Date();
-  const [periodMonth, setPeriodMonth] = useState(now.getMonth() + 1);  // 1-12
-  const [periodYear, setPeriodYear] = useState(now.getFullYear());
+  // ── Period state: default = current month/year (Threshold: 21st) ──────────
+  const nowForPeriod = new Date();
+  if (nowForPeriod.getDate() >= 21) {
+    nowForPeriod.setDate(1); // Evitar desborde en meses cortos (ej: 31 de marzo -> 31 de abril desbordaría a mayo)
+    nowForPeriod.setMonth(nowForPeriod.getMonth() + 1);
+  }
+  const [periodMonth, setPeriodMonth] = useState(nowForPeriod.getMonth() + 1);
+  const [periodYear, setPeriodYear] = useState(nowForPeriod.getFullYear());
 
   // ── Export handler: fetches real attendances then generates Excel ──────────
   // Período 21→20: e.g. Marzo 2026 = 2026-02-21 to 2026-03-20
@@ -630,7 +631,9 @@ export default function App() {
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [isLoading, setIsLoading] = useState(true);  // LaunchedEffect equivalent
   const [errorMessage, setErrorMessage] = useState<string | null>(null); // visible error feedback
-
+  
+  const [searchQuery, setSearchQuery] = useState("");
+  const [globalStats, setGlobalStats] = useState({ ausentes: 0, horasTotales: 0 });
   // States for Authentication (Login / Logout)
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
@@ -834,7 +837,67 @@ export default function App() {
     }
   };
 
-  useEffect(() => { loadSectors(); }, []);
+  const fetchGlobalStats = async () => {
+    try {
+      const headers = getHeaders();
+      const localNow = new Date();
+      const todayStr = `${localNow.getFullYear()}-${String(localNow.getMonth() + 1).padStart(2, '0')}-${String(localNow.getDate()).padStart(2, '0')}`;
+      
+      console.log("[Stats] Fetching for date:", todayStr);
+
+      const resAbs = await fetch(`https://staffaxis-api-prod.pgastonor.workers.dev/api/absences?start_date=${todayStr}&end_date=${todayStr}`, { headers });
+      let ausentesCount = 0;
+      if (resAbs.ok) {
+         const d = await resAbs.json();
+         ausentesCount = d.absences ? d.absences.length : 0;
+         console.log("[Stats] Ausentes found:", ausentesCount);
+      }
+
+      let totalH = 0;
+      if (sectors && sectors.length > 0) {
+          const hoursArray = await Promise.all(sectors.map(async (sec) => {
+              let sectorH = 0;
+              const url = `https://staffaxis-api-prod.pgastonor.workers.dev/api/attendances?sector_id=${encodeURIComponent(sec.apiId)}&start_date=${todayStr}&end_date=${todayStr}`;
+              try {
+                  const res = await fetch(url, { headers });
+                  if (res.ok) {
+                      const data = await res.json();
+                      if (data.attendances && Array.isArray(data.attendances)) {
+                          for (const att of data.attendances) {
+                               if (att.date === todayStr) {
+                                   const val = String(att.work_value || att.minutes_worked || "");
+                                   if (val && !val.startsWith("$") && val.toUpperCase() !== "C" && val !== "null") {
+                                       const num = Number(val);
+                                       if (!isNaN(num) && num > 0) sectorH += (num / 60);
+                                   }
+                               }
+                          }
+                      }
+                  }
+              } catch(err) {
+                  console.error("[Stats] Error for sector", sec.name, err);
+              }
+              return sectorH;
+          }));
+          totalH = hoursArray.reduce((acc, curr) => acc + curr, 0);
+      }
+
+      console.log("[Stats] Total Horas calculated:", totalH);
+      setGlobalStats({ ausentes: ausentesCount, horasTotales: totalH });
+    } catch (e) {
+      console.error("[Stats] Critical error:", e);
+    }
+  };
+
+  useEffect(() => { 
+    loadSectors(); 
+  }, []);
+
+  useEffect(() => {
+    if (sectors && sectors.length > 0) {
+       fetchGlobalStats();
+    }
+  }, [sectors]);
   const handleCreateAdmin = async () => {
     if (!newAdminUser || !newAdminPass) return setCreationError("Completá todos los campos");
     setCreationLoading(true); setCreationError("");
@@ -1036,7 +1099,12 @@ export default function App() {
           </div>
           <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", width: 340 }}>
             <Search size={16} color="rgba(255,255,255,0.4)" />
-            <input placeholder="Buscar sector o empleado…" className="bg-transparent outline-none w-full text-white placeholder-white/40" style={{ fontSize: 14 }} />
+            <input 
+              placeholder="Buscar sector o empleado…" 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="bg-transparent outline-none w-full text-white placeholder-white/40" style={{ fontSize: 14 }} 
+            />
           </div>
           <div className="flex items-center gap-4" style={{ paddingRight: 120 }}>
             {/* Adjust 3: Notifications Dropdown */}
@@ -1110,6 +1178,14 @@ export default function App() {
                       >
                         <UserCog size={14} /> Gestionar Usuarios
                       </button>
+                      <button
+                        onClick={() => { setShowSettingsMenu(false); alert("StaffAdmin - Panel de Control\nVersión: 1.0.9"); }}
+                        className="w-full text-left px-5 py-3 text-white transition-colors hover:bg-white/10 flex items-center gap-2"
+                        style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none" }}
+                      >
+                        <div className="flex items-center justify-center rounded-[4px] border border-current opacity-70" style={{width: 14, height: 14, fontSize: 10, fontWeight: "bold"}}>i</div>
+                        Info
+                      </button>
                       <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "4px 0" }} />
                     </>
                   )}
@@ -1138,7 +1214,7 @@ export default function App() {
           {/* LEFT COLUMN (SIDEBAR) */}
           <div className="flex flex-col gap-6" style={{ width: 320, flexShrink: 0 }}>
             <SectorDropdown value={filter} onChange={setFilter} sectors={sectors} />
-            <StatsCard filter={filter} sectors={sectors} />
+            <StatsCard filter={filter} sectors={sectors} globalStats={globalStats} />
             <div className="flex flex-col gap-3 mt-1 px-2">
               <div className="flex items-center gap-3">
                 <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#4CAF50', boxShadow: '0 0 8px rgba(76,175,80,0.4)' }} />
@@ -1209,7 +1285,7 @@ export default function App() {
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-6">
-                {sectors.map((s) => (
+                {sectors.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()) || (s.encargado && s.encargado.toLowerCase().includes(searchQuery.toLowerCase()))).map((s) => (
                   <SectorCard key={s.id} sector={s} onClick={() => setSelectedSector(s)} />
                 ))}
               </div>
