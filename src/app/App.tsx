@@ -730,10 +730,13 @@ function ReportCategoryCard({ category, onClick }: { category: ReportCategory; o
   );
 }
 
-function ReportSectorCard({ name, color, gradient }: { name: string; color: string; gradient: string }) {
+function ReportSectorCard({ name, color, gradient, employeeCount, onClick }: {
+  name: string; color: string; gradient: string; employeeCount?: number; onClick: () => void;
+}) {
   return (
     <div
-      className="flex flex-col"
+      onClick={onClick}
+      className="cursor-pointer select-none flex flex-col transition-transform hover:scale-[1.02] active:scale-[0.98]"
       style={{
         background: "#2A2A3E",
         borderRadius: 14,
@@ -745,39 +748,155 @@ function ReportSectorCard({ name, color, gradient }: { name: string; color: stri
       }}
     >
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: gradient }} />
-      <p className="text-white font-bold mt-1" style={{ fontSize: 14, letterSpacing: "0.01em" }}>{name}</p>
+      <div className="flex items-center justify-between mt-1">
+        <p className="text-white font-bold" style={{ fontSize: 14, letterSpacing: "0.01em" }}>{name}</p>
+        {employeeCount !== undefined && (
+          <span style={{ fontSize: 11, fontWeight: 600, color, background: `${color}20`, borderRadius: 20, padding: "2px 8px" }}>
+            {employeeCount}
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-1 mt-3">
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>Ver empleados</span>
+        <ChevronRight size={12} color="rgba(255,255,255,0.35)" />
+      </div>
     </div>
   );
 }
 
-function PanelInformes() {
-  const [selectedCategory, setSelectedCategory] = useState<ReportCategory | null>(null);
+type InformesView =
+  | { step: 'categories' }
+  | { step: 'sectors'; category: ReportCategory }
+  | { step: 'employees'; category: ReportCategory; sectorName: string; apiSector: Sector | null };
 
-  if (selectedCategory) {
+function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
+  const [view, setView] = useState<InformesView>({ step: 'categories' });
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [empLoading, setEmpLoading] = useState(false);
+
+  const matchSector = (name: string): Sector | null => {
+    const norm = (s: string) => s.toUpperCase().trim();
+    return apiSectors.find(s => norm(s.name) === norm(name)) ?? null;
+  };
+
+  useEffect(() => {
+    if (view.step !== 'employees' || !view.apiSector) {
+      setEmployees([]);
+      return;
+    }
+    setEmpLoading(true);
+    setEmployees([]);
+    window.electronAPI?.getEmployees(view.apiSector.apiId)
+      .then((data: any[]) => setEmployees(data))
+      .catch((e: unknown) => console.error('[Informes] fetch employees:', e))
+      .finally(() => setEmpLoading(false));
+  }, [view]);
+
+  const BackBtn = ({ onClick }: { onClick: () => void }) => (
+    <button
+      onClick={onClick}
+      className="flex items-center justify-center rounded-xl transition-colors hover:bg-white/10"
+      style={{ width: 34, height: 34, background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer", flexShrink: 0 }}
+    >
+      <ChevronLeft size={16} color="rgba(255,255,255,0.7)" />
+    </button>
+  );
+
+  if (view.step === 'employees') {
+    const { category, sectorName, apiSector } = view;
+    return (
+      <div className="flex flex-col gap-4">
+        {/* Breadcrumb */}
+        <div className="flex items-center gap-3">
+          <BackBtn onClick={() => setView({ step: 'sectors', category })} />
+          <div className="flex items-center gap-2" style={{ fontSize: 13 }}>
+            <span
+              className="cursor-pointer transition-colors hover:text-white/70"
+              style={{ color: "rgba(255,255,255,0.4)" }}
+              onClick={() => setView({ step: 'categories' })}
+            >{category.name}</span>
+            <ChevronRight size={13} color="rgba(255,255,255,0.25)" />
+            <span className="text-white font-bold" style={{ fontSize: 15 }}>{sectorName}</span>
+          </div>
+        </div>
+
+        {empLoading && (
+          <div className="flex items-center justify-center" style={{ minHeight: 200 }}>
+            <div className="rounded-full" style={{ width: 36, height: 36, border: "3px solid rgba(255,255,255,0.1)", borderTop: `3px solid ${category.color}`, animation: "spin 0.8s linear infinite" }} />
+          </div>
+        )}
+
+        {!empLoading && !apiSector && (
+          <div className="flex flex-col items-center justify-center gap-2" style={{ minHeight: 200 }}>
+            <AlertTriangle size={22} color="rgba(255,255,255,0.2)" />
+            <p className="text-white/40" style={{ fontSize: 14 }}>Sector no encontrado en la API</p>
+          </div>
+        )}
+
+        {!empLoading && apiSector && employees.length === 0 && (
+          <div className="flex items-center justify-center" style={{ minHeight: 200 }}>
+            <p className="text-white/40" style={{ fontSize: 14 }}>Sin empleados registrados</p>
+          </div>
+        )}
+
+        {!empLoading && employees.length > 0 && (
+          <div className="flex flex-col gap-0 rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.07)" }}>
+            {/* Table header */}
+            <div className="grid px-5 py-3" style={{ gridTemplateColumns: "2fr 1fr 1fr", background: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+              <span className="text-white/40 uppercase tracking-wider font-semibold" style={{ fontSize: 10 }}>Empleado · {employees.length} en total</span>
+              <span className="text-white/40 uppercase tracking-wider font-semibold" style={{ fontSize: 10 }}>DNI</span>
+              <span className="text-white/40 uppercase tracking-wider font-semibold" style={{ fontSize: 10 }}>Código</span>
+            </div>
+            {/* Rows */}
+            {employees.map((emp, i) => (
+              <div
+                key={emp.id}
+                className="grid items-center px-5 py-3 transition-colors hover:bg-white/5"
+                style={{ gridTemplateColumns: "2fr 1fr 1fr", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)", borderBottom: i < employees.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 28, height: 28, background: `${category.color}20`, border: `1px solid ${category.color}35` }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: category.color }}>
+                      {emp.first_name?.[0]}{emp.last_name?.[0]}
+                    </span>
+                  </div>
+                  <span className="text-white font-semibold" style={{ fontSize: 13 }}>{emp.first_name} {emp.last_name}</span>
+                </div>
+                <span className="text-white/55" style={{ fontSize: 13 }}>{emp.dni || '—'}</span>
+                <span className="text-white/35" style={{ fontSize: 13 }}>{emp.external_code || '—'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (view.step === 'sectors') {
+    const { category } = view;
     return (
       <div className="flex flex-col gap-5">
         <div className="flex items-center gap-3 mb-1">
-          <button
-            onClick={() => setSelectedCategory(null)}
-            className="flex items-center justify-center rounded-xl transition-colors hover:bg-white/10"
-            style={{ width: 34, height: 34, background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer", flexShrink: 0 }}
-          >
-            <ChevronLeft size={16} color="rgba(255,255,255,0.7)" />
-          </button>
+          <BackBtn onClick={() => setView({ step: 'categories' })} />
           <div>
-            <p className="text-white font-bold" style={{ fontSize: 18, letterSpacing: "-0.01em" }}>{selectedCategory.name}</p>
-            <p className="text-white/40" style={{ fontSize: 12 }}>{selectedCategory.sectors.length} sectores</p>
+            <p className="text-white font-bold" style={{ fontSize: 18, letterSpacing: "-0.01em" }}>{category.name}</p>
+            <p className="text-white/40" style={{ fontSize: 12 }}>{category.sectors.length} sectores</p>
           </div>
         </div>
         <div className="grid grid-cols-3 gap-4">
-          {selectedCategory.sectors.map((sectorName) => (
-            <ReportSectorCard
-              key={sectorName}
-              name={sectorName}
-              color={selectedCategory.color}
-              gradient={selectedCategory.gradient}
-            />
-          ))}
+          {category.sectors.map((sectorName) => {
+            const apiSector = matchSector(sectorName);
+            return (
+              <ReportSectorCard
+                key={sectorName}
+                name={sectorName}
+                color={category.color}
+                gradient={category.gradient}
+                employeeCount={apiSector?.employees}
+                onClick={() => setView({ step: 'employees', category, sectorName, apiSector })}
+              />
+            );
+          })}
         </div>
       </div>
     );
@@ -786,7 +905,7 @@ function PanelInformes() {
   return (
     <div className="grid grid-cols-3 gap-6">
       {REPORT_CATEGORIES.map((cat) => (
-        <ReportCategoryCard key={cat.id} category={cat} onClick={() => setSelectedCategory(cat)} />
+        <ReportCategoryCard key={cat.id} category={cat} onClick={() => setView({ step: 'sectors', category: cat })} />
       ))}
     </div>
   );
@@ -1445,7 +1564,7 @@ export default function App() {
               )}
             </div>
             {activePanel === 'informes' ? (
-              <PanelInformes />
+              <PanelInformes apiSectors={sectors} />
             ) : isLoading ? (
               /* CircularProgressIndicator equivalent */
               <div className="flex-1 flex flex-col items-center justify-center gap-4" style={{ minHeight: 320 }}>
