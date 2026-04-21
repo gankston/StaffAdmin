@@ -31,7 +31,13 @@ import {
   ChevronLeft,
   UserPlus,
   LayoutGrid,
-  BarChart3
+  BarChart3,
+  LeafyGreen,
+  Wheat,
+  Banana,
+  Factory,
+  Tractor,
+  HardHat
 } from "lucide-react";
 
 
@@ -48,15 +54,21 @@ interface Sector {
   trend: number;
 }
 
-const getIcon = (iconName: string) => {
+const getIcon = (iconName: string, size = 24) => {
   switch (iconName) {
-    case 'Cpu': return <Cpu size={24} />;
-    case 'Truck': return <Truck size={24} />;
-    case 'Users': return <Users size={24} />;
-    case 'DollarSign': return <DollarSign size={24} />;
-    case 'FlaskConical': return <FlaskConical size={24} />;
-    case 'Headphones': return <Headphones size={24} />;
-    default: return <Building2 size={24} />;
+    case 'Cpu': return <Cpu size={size} />;
+    case 'Truck': return <Truck size={size} />;
+    case 'Users': return <Users size={size} />;
+    case 'DollarSign': return <DollarSign size={size} />;
+    case 'FlaskConical': return <FlaskConical size={size} />;
+    case 'Headphones': return <Headphones size={size} />;
+    case 'LeafyGreen': return <LeafyGreen size={size} />;
+    case 'Wheat': return <Wheat size={size} />;
+    case 'Banana': return <Banana size={size} />;
+    case 'Factory': return <Factory size={size} />;
+    case 'Tractor': return <Tractor size={size} />;
+    case 'HardHat': return <HardHat size={size} />;
+    default: return <Building2 size={size} />;
   }
 };
 
@@ -635,7 +647,7 @@ const REPORT_CATEGORIES = [
     color: '#4CAF50',
     gradient: 'linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%)',
     shadow: 'rgba(76,175,80,0.25)',
-    icon: 'FlaskConical' as const,
+    icon: 'LeafyGreen' as const,
     sectors: ['ZANJA', 'CAÑADAS', 'CARLETTO', 'PESCADO', 'INVERNADERO EMB', 'PICHANAL TUMA', 'RAIGON'],
   },
   {
@@ -644,7 +656,7 @@ const REPORT_CATEGORIES = [
     color: '#FF9800',
     gradient: 'linear-gradient(135deg, #FF9800 0%, #E65100 100%)',
     shadow: 'rgba(255,152,0,0.25)',
-    icon: 'Building2' as const,
+    icon: 'Wheat' as const,
     sectors: ['RUTA 5', 'MOSCONI', 'CUCHUY', 'LAS VARAS'],
   },
   {
@@ -653,7 +665,7 @@ const REPORT_CATEGORIES = [
     color: '#F9A825',
     gradient: 'linear-gradient(135deg, #F9A825 0%, #F57F17 100%)',
     shadow: 'rgba(249,168,37,0.25)',
-    icon: 'Building2' as const,
+    icon: 'Banana' as const,
     sectors: ['SOLAZUTY', 'SOLAZUTY EMP', 'AGUADO', 'AGUADO EMP', 'COLONIA', 'COLONIA EMP', 'SAN AGUSTIN'],
   },
   {
@@ -662,7 +674,7 @@ const REPORT_CATEGORIES = [
     color: '#26C6DA',
     gradient: 'linear-gradient(135deg, #26C6DA 0%, #00838F 100%)',
     shadow: 'rgba(38,198,218,0.25)',
-    icon: 'Cpu' as const,
+    icon: 'Factory' as const,
     sectors: ['EMPAQUE', 'FABRICA CONSERVAS', 'FABRICA DE VIANDAS', 'PLANTA DE PROCESO', 'PLANTA SILO'],
   },
   {
@@ -671,7 +683,7 @@ const REPORT_CATEGORIES = [
     color: '#9C27B0',
     gradient: 'linear-gradient(135deg, #9C27B0 0%, #4A148C 100%)',
     shadow: 'rgba(156,39,176,0.25)',
-    icon: 'Building2' as const,
+    icon: 'Tractor' as const,
     sectors: ['FEED LOT'],
   },
   {
@@ -680,7 +692,7 @@ const REPORT_CATEGORIES = [
     color: '#5C6BC0',
     gradient: 'linear-gradient(135deg, #5C6BC0 0%, #283593 100%)',
     shadow: 'rgba(92,107,192,0.25)',
-    icon: 'Headphones' as const,
+    icon: 'HardHat' as const,
     sectors: ['CONSTRUCCION', 'DRONSA', 'FUMIGACION', 'IMPLESA', 'PICADO', 'TALLER', 'TYLSA', 'VIALSA'],
   },
 ];
