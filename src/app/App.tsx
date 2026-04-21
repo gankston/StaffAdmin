@@ -28,7 +28,10 @@ import {
   Plus,
   LogOut,
   ChevronRight,
-  UserPlus
+  ChevronLeft,
+  UserPlus,
+  LayoutGrid,
+  BarChart3
 } from "lucide-react";
 
 
@@ -623,9 +626,164 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
   );
 }
 
+// ─── Panel de Informes ────────────────────────────────────────────────────────
+
+const REPORT_CATEGORIES = [
+  {
+    id: 'hortalizas',
+    name: 'Hortalizas',
+    color: '#4CAF50',
+    gradient: 'linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%)',
+    shadow: 'rgba(76,175,80,0.25)',
+    icon: 'FlaskConical' as const,
+    sectors: ['ZANJA', 'CAÑADAS', 'CARLETTO', 'PESCADO', 'INVERNADERO EMB', 'PICHANAL TUMA', 'RAIGON'],
+  },
+  {
+    id: 'granos',
+    name: 'Granos',
+    color: '#FF9800',
+    gradient: 'linear-gradient(135deg, #FF9800 0%, #E65100 100%)',
+    shadow: 'rgba(255,152,0,0.25)',
+    icon: 'Building2' as const,
+    sectors: ['RUTA 5', 'MOSCONI', 'CUCHUY', 'LAS VARAS'],
+  },
+  {
+    id: 'banana',
+    name: 'Banana',
+    color: '#F9A825',
+    gradient: 'linear-gradient(135deg, #F9A825 0%, #F57F17 100%)',
+    shadow: 'rgba(249,168,37,0.25)',
+    icon: 'Building2' as const,
+    sectors: ['SOLAZUTY', 'SOLAZUTY EMP', 'AGUADO', 'AGUADO EMP', 'COLONIA', 'COLONIA EMP', 'SAN AGUSTIN'],
+  },
+  {
+    id: 'industrial',
+    name: 'Industrial',
+    color: '#26C6DA',
+    gradient: 'linear-gradient(135deg, #26C6DA 0%, #00838F 100%)',
+    shadow: 'rgba(38,198,218,0.25)',
+    icon: 'Cpu' as const,
+    sectors: ['EMPAQUE', 'FABRICA CONSERVAS', 'FABRICA DE VIANDAS', 'PLANTA DE PROCESO', 'PLANTA SILO'],
+  },
+  {
+    id: 'ganaderia',
+    name: 'Ganadería',
+    color: '#9C27B0',
+    gradient: 'linear-gradient(135deg, #9C27B0 0%, #4A148C 100%)',
+    shadow: 'rgba(156,39,176,0.25)',
+    icon: 'Building2' as const,
+    sectors: ['FEED LOT'],
+  },
+  {
+    id: 'servicios',
+    name: 'Servicios',
+    color: '#5C6BC0',
+    gradient: 'linear-gradient(135deg, #5C6BC0 0%, #283593 100%)',
+    shadow: 'rgba(92,107,192,0.25)',
+    icon: 'Headphones' as const,
+    sectors: ['CONSTRUCCION', 'DRONSA', 'FUMIGACION', 'IMPLESA', 'PICADO', 'TALLER', 'TYLSA', 'VIALSA'],
+  },
+];
+
+type ReportCategory = typeof REPORT_CATEGORIES[number];
+
+function ReportCategoryCard({ category, onClick }: { category: ReportCategory; onClick: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      className="cursor-pointer select-none flex flex-col transition-transform hover:scale-[1.02] active:scale-[0.98]"
+      style={{
+        background: category.gradient,
+        borderRadius: 16,
+        padding: 24,
+        minHeight: 180,
+        boxShadow: `0 8px 24px ${category.shadow}`,
+      }}
+    >
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center justify-center rounded-xl" style={{ width: 44, height: 44, background: "rgba(255,255,255,0.2)", color: "#fff" }}>
+          {getIcon(category.icon)}
+        </div>
+        <div className="px-3 py-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.2)" }}>
+          <span className="text-white font-bold" style={{ fontSize: 12 }}>{category.sectors.length} sectores</span>
+        </div>
+      </div>
+      <div className="flex-1" />
+      <h3 className="text-white font-bold leading-tight mb-3" style={{ fontSize: 22, letterSpacing: "-0.01em" }}>{category.name}</h3>
+      <div className="flex items-center justify-between border-t border-white/20 pt-3">
+        <span className="text-white/75 font-semibold" style={{ fontSize: 12 }}>Ver sectores</span>
+        <ChevronRight size={16} color="rgba(255,255,255,0.75)" />
+      </div>
+    </div>
+  );
+}
+
+function ReportSectorCard({ name, color, gradient }: { name: string; color: string; gradient: string }) {
+  return (
+    <div
+      className="flex flex-col"
+      style={{
+        background: "#2A2A3E",
+        borderRadius: 14,
+        padding: "18px 20px",
+        border: `1.5px solid ${color}40`,
+        boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+    >
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: gradient }} />
+      <p className="text-white font-bold mt-1" style={{ fontSize: 14, letterSpacing: "0.01em" }}>{name}</p>
+    </div>
+  );
+}
+
+function PanelInformes() {
+  const [selectedCategory, setSelectedCategory] = useState<ReportCategory | null>(null);
+
+  if (selectedCategory) {
+    return (
+      <div className="flex flex-col gap-5">
+        <div className="flex items-center gap-3 mb-1">
+          <button
+            onClick={() => setSelectedCategory(null)}
+            className="flex items-center justify-center rounded-xl transition-colors hover:bg-white/10"
+            style={{ width: 34, height: 34, background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer", flexShrink: 0 }}
+          >
+            <ChevronLeft size={16} color="rgba(255,255,255,0.7)" />
+          </button>
+          <div>
+            <p className="text-white font-bold" style={{ fontSize: 18, letterSpacing: "-0.01em" }}>{selectedCategory.name}</p>
+            <p className="text-white/40" style={{ fontSize: 12 }}>{selectedCategory.sectors.length} sectores</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-4">
+          {selectedCategory.sectors.map((sectorName) => (
+            <ReportSectorCard
+              key={sectorName}
+              name={sectorName}
+              color={selectedCategory.color}
+              gradient={selectedCategory.gradient}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-3 gap-6">
+      {REPORT_CATEGORIES.map((cat) => (
+        <ReportCategoryCard key={cat.id} category={cat} onClick={() => setSelectedCategory(cat)} />
+      ))}
+    </div>
+  );
+}
+
 export default function App() {
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [filter, setFilter] = useState("Todos");
+  const [activePanel, setActivePanel] = useState<'sectores' | 'informes'>('sectores');
   const [selectedSector, setSelectedSector] = useState<Sector | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
@@ -1229,23 +1387,54 @@ export default function App() {
 
           {/* RIGHT COLUMN — API data with loading state + manual refresh */}
           <div className="flex-1 flex flex-col">
-            {/* Header row with Refresh button and newly added Global Export button */}
+            {/* Header row: Panel tabs + contextual actions */}
             <div className="flex items-center justify-between mb-6">
-              <p className="text-white/50 font-semibold uppercase tracking-wider" style={{ fontSize: 11 }}>Panel de Sectores</p>
-              <div className="flex items-center gap-3">
+              {/* Tab navigation */}
+              <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.08)" }}>
                 <button
-                  onClick={() => loadSectors(true)}
-                  disabled={isLoading}
-                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl transition-all hover:bg-white/10 active:scale-95"
-                  style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", cursor: isLoading ? "not-allowed" : "pointer", opacity: isLoading ? 0.5 : 1 }}
-                  title="Actualizar desde la API"
+                  onClick={() => setActivePanel('sectores')}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
+                  style={{
+                    background: activePanel === 'sectores' ? "rgba(156,39,176,0.2)" : "transparent",
+                    border: activePanel === 'sectores' ? "1px solid rgba(156,39,176,0.4)" : "1px solid transparent",
+                    cursor: "pointer",
+                  }}
                 >
-                  <RefreshCw size={14} color="rgba(255,255,255,0.7)" style={{ animation: isLoading ? "spin 0.8s linear infinite" : "none" }} />
-                  <span className="text-white/70" style={{ fontSize: 12, fontWeight: 600 }}>Actualizar</span>
+                  <LayoutGrid size={13} color={activePanel === 'sectores' ? "#CE93D8" : "rgba(255,255,255,0.4)"} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: activePanel === 'sectores' ? "#CE93D8" : "rgba(255,255,255,0.4)" }}>Panel de Sectores</span>
+                </button>
+                <button
+                  onClick={() => setActivePanel('informes')}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
+                  style={{
+                    background: activePanel === 'informes' ? "rgba(38,198,218,0.15)" : "transparent",
+                    border: activePanel === 'informes' ? "1px solid rgba(38,198,218,0.4)" : "1px solid transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  <BarChart3 size={13} color={activePanel === 'informes' ? "#80DEEA" : "rgba(255,255,255,0.4)"} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: activePanel === 'informes' ? "#80DEEA" : "rgba(255,255,255,0.4)" }}>Panel de Informes</span>
                 </button>
               </div>
+              {/* Refresh — only visible on Sectores panel */}
+              {activePanel === 'sectores' && (
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => loadSectors(true)}
+                    disabled={isLoading}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl transition-all hover:bg-white/10 active:scale-95"
+                    style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", cursor: isLoading ? "not-allowed" : "pointer", opacity: isLoading ? 0.5 : 1 }}
+                    title="Actualizar desde la API"
+                  >
+                    <RefreshCw size={14} color="rgba(255,255,255,0.7)" style={{ animation: isLoading ? "spin 0.8s linear infinite" : "none" }} />
+                    <span className="text-white/70" style={{ fontSize: 12, fontWeight: 600 }}>Actualizar</span>
+                  </button>
+                </div>
+              )}
             </div>
-            {isLoading ? (
+            {activePanel === 'informes' ? (
+              <PanelInformes />
+            ) : isLoading ? (
               /* CircularProgressIndicator equivalent */
               <div className="flex-1 flex flex-col items-center justify-center gap-4" style={{ minHeight: 320 }}>
                 <div
