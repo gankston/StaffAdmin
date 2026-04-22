@@ -798,6 +798,7 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
 
       // Fetch attendances for all sectors in the category in parallel
       const allRows: { employeeName: string; dni: string; sectorName: string; value: string }[] = [];
+      let totalHours = 0;
 
       await Promise.all(category.sectors.map(async (sectorName) => {
         const norm = (s: string) => s.toUpperCase().trim();
@@ -806,27 +807,32 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
 
         const attendances = await window.electronAPI.getAttendances(apiSector.apiId, startDate, endDate, adminToken);
 
-        // Aggregate by employee
-        const empMap = new Map<string, { name: string; dni: string; hours: number; hasHours: boolean; status: string }>();
+        // Aggregate hours by employee (same parsing as exportExcel)
+        const empMap = new Map<string, { name: string; dni: string; hours: number }>();
         for (const att of attendances as any[]) {
+          if (att.status === 'Faltante') continue;
+          const hrs = att.hours ?? '';
+          let numHrs = 0;
+          if (typeof hrs === 'number') numHrs = hrs;
+          else if (typeof hrs === 'string' && hrs !== '' && !isNaN(Number(hrs))) numHrs = Number(hrs);
+          if (numHrs <= 0) continue;
+
           const key = att.employee_id || `${att.first_name}-${att.last_name}`;
           const name = `${att.first_name || ''} ${att.last_name || ''}`.trim() || 'Sin nombre';
           const dni = att.dni && att.dni !== 'null' ? att.dni : 'SIN DATOS';
-          if (!empMap.has(key)) empMap.set(key, { name, dni, hours: 0, hasHours: false, status: '' });
-          const e = empMap.get(key)!;
-          if (att.hours != null && Number(att.hours) > 0) { e.hours += Number(att.hours); e.hasHours = true; }
-          if (att.status) e.status = att.status;
+          if (!empMap.has(key)) empMap.set(key, { name, dni, hours: 0 });
+          empMap.get(key)!.hours += numHrs;
         }
 
         for (const [, emp] of empMap) {
-          const value = emp.hasHours ? `${emp.hours} hs` : emp.status || 'SIN DATOS';
-          allRows.push({ employeeName: emp.name, dni: emp.dni, sectorName, value });
+          totalHours += emp.hours;
+          allRows.push({ employeeName: emp.name, dni: emp.dni, sectorName, value: `${emp.hours} hs` });
         }
       }));
 
       allRows.sort((a, b) => a.employeeName.localeCompare(b.employeeName, 'es'));
 
-      const result = await window.electronAPI.generatePdfReport({ categoryName: category.name, periodMonth, periodYear, rows: allRows });
+      const result = await window.electronAPI.generatePdfReport({ categoryName: category.name, periodMonth, periodYear, rows: allRows, totalHours });
 
       if (result.success && result.base64) {
         const bytes = new Uint8Array(atob(result.base64).split('').map(c => c.charCodeAt(0)));

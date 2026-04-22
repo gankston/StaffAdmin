@@ -12,6 +12,7 @@ export interface PdfReportParams {
   periodMonth: number;
   periodYear: number;
   rows: ReportRow[];
+  totalHours?: number;
 }
 
 const MONTH_NAMES_ES = [
@@ -20,21 +21,25 @@ const MONTH_NAMES_ES = [
 ];
 
 function buildHTML(params: PdfReportParams): string {
-  const { categoryName, periodMonth, periodYear, rows } = params;
+  const { categoryName, periodMonth, periodYear, rows, totalHours } = params;
   const fromMonth = periodMonth === 1 ? 12 : periodMonth - 1;
   const fromYear = periodMonth === 1 ? periodYear - 1 : periodYear;
   const periodStr = `21 de ${MONTH_NAMES_ES[fromMonth]} ${fromYear} al 20 de ${MONTH_NAMES_ES[periodMonth]} ${periodYear}`;
   const today = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
+  const totalRow = totalHours != null
+    ? `<tr class="total-row"><td colspan="3"><strong>TOTAL HORAS</strong></td><td class="value">${totalHours} hs</td></tr>`
+    : '';
+
   const tableRows = rows.length === 0
-    ? `<tr><td colspan="4" class="empty">Sin registros para este período</td></tr>`
+    ? `<tr><td colspan="4" class="empty">Sin registros para este período</td></tr>${totalRow}`
     : rows.map(r => `
         <tr>
           <td class="name">${r.employeeName}</td>
           <td class="dni">${r.dni}</td>
           <td>${r.sectorName}</td>
           <td class="value">${r.value}</td>
-        </tr>`).join('');
+        </tr>`).join('') + totalRow;
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -84,6 +89,8 @@ function buildHTML(params: PdfReportParams): string {
   td.dni { font-family: 'Courier New', monospace; color: #555; font-size: 10px; }
   td.value { text-align: right; font-weight: 700; color: #1a1a2e; }
   td.empty { text-align: center; color: #999; padding: 32px; font-style: italic; }
+  tr.total-row td { background: #1a1a2e; color: white; font-weight: 900; padding: 10px 14px; font-size: 11px; }
+  tr.total-row td.value { text-align: right; color: #7dd3fc; font-size: 13px; }
   .footer {
     margin-top: 20px;
     padding-top: 10px;
