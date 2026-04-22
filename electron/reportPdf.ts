@@ -1,4 +1,6 @@
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, app } from 'electron';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface ReportRow {
   employeeName: string;
@@ -148,9 +150,14 @@ export async function generatePdfReport(
   params: PdfReportParams
 ): Promise<{ success: boolean; base64?: string; fileName?: string; error?: string }> {
   let win: BrowserWindow | null = null;
+  let tmpFile: string | null = null;
   try {
     win = new BrowserWindow({ show: false, webPreferences: { javascript: false } });
-    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(buildHTML(params)));
+    // Large reports exceed Electron's data: URL size limit (ERR_INVALID_URL -300).
+    // Write HTML to a temp file and load via file:// instead.
+    tmpFile = path.join(app.getPath('temp'), `staffadmin-report-${Date.now()}-${Math.random().toString(36).slice(2)}.html`);
+    fs.writeFileSync(tmpFile, buildHTML(params), 'utf-8');
+    await win.loadFile(tmpFile);
 
     const buf = await win.webContents.printToPDF({
       printBackground: true,
@@ -168,5 +175,8 @@ export async function generatePdfReport(
     return { success: false, error: (err as Error).message };
   } finally {
     win?.close();
+    if (tmpFile) {
+      try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+    }
   }
 }
