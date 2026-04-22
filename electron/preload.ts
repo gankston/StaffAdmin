@@ -6,7 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAttendances: (sectorId: string, startDate: string, endDate: string, adminToken?: string) =>
         ipcRenderer.invoke('get-attendances', sectorId, startDate, endDate, adminToken),
     toggleSectorState: (id: number) => ipcRenderer.invoke('toggle-sector', id),
-    exportExcel: (params: any) => ipcRenderer.invoke('export-excel', params)
+    exportExcel: (params: any) => ipcRenderer.invoke('export-excel', params),
+    generatePdfReport: (params: any) => ipcRenderer.invoke('generate-pdf-report', params)
 });
 
 export type ElectronAPI = {
@@ -15,4 +16,5 @@ export type ElectronAPI = {
     getAttendances: (sectorId: string, startDate: string, endDate: string, adminToken?: string) => Promise<any[]>;
     toggleSectorState: (id: number) => Promise<any[]>;
     exportExcel: (params: any) => Promise<{ success: boolean; base64?: string; fileName?: string; error?: string }>;
+    generatePdfReport: (params: any) => Promise<{ success: boolean; base64?: string; fileName?: string; error?: string }>;
 }

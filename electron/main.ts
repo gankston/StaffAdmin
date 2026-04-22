@@ -23,6 +23,7 @@ log.info(`Log file: ${log.transports.file.getFile().path}`);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { exportExcel, ExportParams } from './exportExcel';
+import { generatePdfReport, PdfReportParams } from './reportPdf';
 
 const isDev = !app.isPackaged;
 
@@ -130,6 +131,7 @@ app.whenReady().then(() => {
         }
     });
     ipcMain.handle('export-excel', async (_event, params: ExportParams) => await exportExcel(mainWindow, params));
+    ipcMain.handle('generate-pdf-report', async (_event, params: PdfReportParams) => await generatePdfReport(params));
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();

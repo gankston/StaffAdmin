@@ -37,7 +37,8 @@ import {
   Banana,
   Factory,
   Tractor,
-  HardHat
+  HardHat,
+  FileText
 } from "lucide-react";
 
 
@@ -773,6 +774,77 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
   const [view, setView] = useState<InformesView>({ step: 'categories' });
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [empLoading, setEmpLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
+
+  // Current period (same 21→20 rule as FloatingModal)
+  const nowForPeriod = new Date();
+  if (nowForPeriod.getDate() >= 21) {
+    nowForPeriod.setDate(1);
+    nowForPeriod.setMonth(nowForPeriod.getMonth() + 1);
+  }
+  const periodMonth = nowForPeriod.getMonth() + 1;
+  const periodYear = nowForPeriod.getFullYear();
+
+  const handleGeneratePdf = async (category: typeof REPORT_CATEGORIES[number]) => {
+    if (pdfLoading) return;
+    setPdfLoading(true);
+    try {
+      const fromMonth = periodMonth === 1 ? 12 : periodMonth - 1;
+      const fromYear = periodMonth === 1 ? periodYear - 1 : periodYear;
+      const startDate = `${fromYear}-${String(fromMonth).padStart(2, '0')}-21`;
+      const endDate = `${periodYear}-${String(periodMonth).padStart(2, '0')}-20`;
+      const rawToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+      const adminToken = rawToken === "undefined" ? "" : rawToken;
+
+      // Fetch attendances for all sectors in the category in parallel
+      const allRows: { employeeName: string; dni: string; sectorName: string; value: string }[] = [];
+
+      await Promise.all(category.sectors.map(async (sectorName) => {
+        const norm = (s: string) => s.toUpperCase().trim();
+        const apiSector = apiSectors.find(s => norm(s.name) === norm(sectorName));
+        if (!apiSector) return;
+
+        const attendances = await window.electronAPI.getAttendances(apiSector.apiId, startDate, endDate, adminToken);
+
+        // Aggregate by employee
+        const empMap = new Map<string, { name: string; dni: string; hours: number; hasHours: boolean; status: string }>();
+        for (const att of attendances as any[]) {
+          const key = att.employee_id || `${att.first_name}-${att.last_name}`;
+          const name = `${att.first_name || ''} ${att.last_name || ''}`.trim() || 'Sin nombre';
+          const dni = att.dni && att.dni !== 'null' ? att.dni : 'SIN DATOS';
+          if (!empMap.has(key)) empMap.set(key, { name, dni, hours: 0, hasHours: false, status: '' });
+          const e = empMap.get(key)!;
+          if (att.hours != null && Number(att.hours) > 0) { e.hours += Number(att.hours); e.hasHours = true; }
+          if (att.status) e.status = att.status;
+        }
+
+        for (const [, emp] of empMap) {
+          const value = emp.hasHours ? `${emp.hours} hs` : emp.status || 'SIN DATOS';
+          allRows.push({ employeeName: emp.name, dni: emp.dni, sectorName, value });
+        }
+      }));
+
+      allRows.sort((a, b) => a.employeeName.localeCompare(b.employeeName, 'es'));
+
+      const result = await window.electronAPI.generatePdfReport({ categoryName: category.name, periodMonth, periodYear, rows: allRows });
+
+      if (result.success && result.base64) {
+        const bytes = new Uint8Array(atob(result.base64).split('').map(c => c.charCodeAt(0)));
+        const blob = new Blob([bytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = result.fileName || 'informe.pdf';
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      } else {
+        console.error('[PDF]', result.error);
+      }
+    } catch (err) {
+      console.error('[PDF] error:', err);
+    } finally {
+      setPdfLoading(false);
+    }
+  };
 
   const matchSector = (name: string): Sector | null => {
     const norm = (s: string) => s.toUpperCase().trim();
@@ -876,12 +948,33 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
     const { category } = view;
     return (
       <div className="flex flex-col gap-5">
-        <div className="flex items-center gap-3 mb-1">
-          <BackBtn onClick={() => setView({ step: 'categories' })} />
-          <div>
-            <p className="text-white font-bold" style={{ fontSize: 18, letterSpacing: "-0.01em" }}>{category.name}</p>
-            <p className="text-white/40" style={{ fontSize: 12 }}>{category.sectors.length} sectores</p>
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-3">
+            <BackBtn onClick={() => setView({ step: 'categories' })} />
+            <div>
+              <p className="text-white font-bold" style={{ fontSize: 18, letterSpacing: "-0.01em" }}>{category.name}</p>
+              <p className="text-white/40" style={{ fontSize: 12 }}>{category.sectors.length} sectores</p>
+            </div>
           </div>
+          <button
+            onClick={() => handleGeneratePdf(category)}
+            disabled={pdfLoading}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all hover:opacity-90 active:scale-[0.97]"
+            style={{
+              background: pdfLoading ? "rgba(255,255,255,0.07)" : "linear-gradient(135deg, #9C27B0, #26C6DA)",
+              border: pdfLoading ? "1px solid rgba(255,255,255,0.1)" : "none",
+              cursor: pdfLoading ? "not-allowed" : "pointer",
+              boxShadow: pdfLoading ? "none" : "0 4px 16px rgba(156,39,176,0.3)",
+            }}
+          >
+            {pdfLoading
+              ? <div className="rounded-full" style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,0.2)", borderTop: "2px solid rgba(255,255,255,0.7)", animation: "spin 0.8s linear infinite" }} />
+              : <FileText size={14} color="#fff" />
+            }
+            <span style={{ fontSize: 12, fontWeight: 700, color: pdfLoading ? "rgba(255,255,255,0.4)" : "#fff" }}>
+              {pdfLoading ? 'Generando…' : 'Generar Informe PDF'}
+            </span>
+          </button>
         </div>
         <div className="grid grid-cols-3 gap-4">
           {category.sectors.map((sectorName) => {
