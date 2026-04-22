@@ -776,14 +776,18 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
   const [empLoading, setEmpLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
 
-  // Current period (same 21→20 rule as FloatingModal)
+  // Current period (same 21→20 rule as FloatingModal) — default, user can change
   const nowForPeriod = new Date();
   if (nowForPeriod.getDate() >= 21) {
     nowForPeriod.setDate(1);
     nowForPeriod.setMonth(nowForPeriod.getMonth() + 1);
   }
-  const periodMonth = nowForPeriod.getMonth() + 1;
-  const periodYear = nowForPeriod.getFullYear();
+  const [periodMonth, setPeriodMonth] = useState(nowForPeriod.getMonth() + 1);
+  const [periodYear, setPeriodYear] = useState(nowForPeriod.getFullYear());
+
+  const MONTHS_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const periodFromMonth = periodMonth === 1 ? 12 : periodMonth - 1;
+  const periodFromYear = periodMonth === 1 ? periodYear - 1 : periodYear;
 
   const handleGeneratePdf = async (category: typeof REPORT_CATEGORIES[number]) => {
     if (pdfLoading) return;
@@ -968,25 +972,55 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
               <p className="text-white/40" style={{ fontSize: 12 }}>{category.sectors.length} sectores</p>
             </div>
           </div>
-          <button
-            onClick={() => handleGeneratePdf(category)}
-            disabled={pdfLoading}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all hover:opacity-90 active:scale-[0.97]"
-            style={{
-              background: pdfLoading ? "rgba(255,255,255,0.07)" : "linear-gradient(135deg, #9C27B0, #26C6DA)",
-              border: pdfLoading ? "1px solid rgba(255,255,255,0.1)" : "none",
-              cursor: pdfLoading ? "not-allowed" : "pointer",
-              boxShadow: pdfLoading ? "none" : "0 4px 16px rgba(156,39,176,0.3)",
-            }}
-          >
-            {pdfLoading
-              ? <div className="rounded-full" style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,0.2)", borderTop: "2px solid rgba(255,255,255,0.7)", animation: "spin 0.8s linear infinite" }} />
-              : <FileText size={14} color="#fff" />
-            }
-            <span style={{ fontSize: 12, fontWeight: 700, color: pdfLoading ? "rgba(255,255,255,0.4)" : "#fff" }}>
-              {pdfLoading ? 'Generando…' : 'Generar Informe PDF'}
-            </span>
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Período</span>
+              <select
+                value={periodMonth}
+                onChange={(e) => setPeriodMonth(Number(e.target.value))}
+                disabled={pdfLoading}
+                className="bg-transparent text-white outline-none cursor-pointer"
+                style={{ fontSize: 12, fontWeight: 600 }}
+              >
+                {MONTHS_ES.map((m, i) => (
+                  <option key={i} value={i + 1} style={{ background: "#1e1e2e" }}>{m}</option>
+                ))}
+              </select>
+              <select
+                value={periodYear}
+                onChange={(e) => setPeriodYear(Number(e.target.value))}
+                disabled={pdfLoading}
+                className="bg-transparent text-white outline-none cursor-pointer"
+                style={{ fontSize: 12, fontWeight: 600 }}
+              >
+                {[periodYear - 1, periodYear, periodYear + 1].map((y) => (
+                  <option key={y} value={y} style={{ background: "#1e1e2e" }}>{y}</option>
+                ))}
+              </select>
+              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>
+                21/{String(periodFromMonth).padStart(2,'0')}/{periodFromYear} → 20/{String(periodMonth).padStart(2,'0')}/{periodYear}
+              </span>
+            </div>
+            <button
+              onClick={() => handleGeneratePdf(category)}
+              disabled={pdfLoading}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all hover:opacity-90 active:scale-[0.97]"
+              style={{
+                background: pdfLoading ? "rgba(255,255,255,0.07)" : "linear-gradient(135deg, #9C27B0, #26C6DA)",
+                border: pdfLoading ? "1px solid rgba(255,255,255,0.1)" : "none",
+                cursor: pdfLoading ? "not-allowed" : "pointer",
+                boxShadow: pdfLoading ? "none" : "0 4px 16px rgba(156,39,176,0.3)",
+              }}
+            >
+              {pdfLoading
+                ? <div className="rounded-full" style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,0.2)", borderTop: "2px solid rgba(255,255,255,0.7)", animation: "spin 0.8s linear infinite" }} />
+                : <FileText size={14} color="#fff" />
+              }
+              <span style={{ fontSize: 12, fontWeight: 700, color: pdfLoading ? "rgba(255,255,255,0.4)" : "#fff" }}>
+                {pdfLoading ? 'Generando…' : 'Generar Informe PDF'}
+              </span>
+            </button>
+          </div>
         </div>
         <div className="grid grid-cols-3 gap-4">
           {category.sectors.map((sectorName) => {
