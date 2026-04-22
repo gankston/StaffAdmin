@@ -53,7 +53,9 @@ export interface EmployeeApiResponse {
 export interface ApiAttendance {
     id: string;
     employee_id: string;
-    sector_id: string;
+    sector_id?: string;
+    record_sector_id?: string;
+    record_sector_name?: string;
     date: string;          // ISO date string e.g. "2026-03-15"
     hours?: number | null;
     status?: string | null;

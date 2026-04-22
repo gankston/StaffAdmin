@@ -598,7 +598,14 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
                 style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 13, cursor: "pointer", outline: "none" }}
               >
                 {['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
-                  .map((m, i) => <option key={m} value={i + 1} style={{ background: "#2A2A3E" }}>{m}</option>)}
+                  .map((m, i, arr) => {
+                    const prevMonth = arr[i === 0 ? 11 : i - 1];
+                    return (
+                      <option key={m} value={i + 1} style={{ background: "#2A2A3E" }}>
+                        21 {prevMonth.substring(0,3)} - 20 {m.substring(0,3)} ({m})
+                      </option>
+                    );
+                  })}
               </select>
               <select
                 value={periodYear}
@@ -803,7 +810,7 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
       // Fetch attendances for all sectors in the category in parallel
       // API filters by employee's ASSIGNED sector (e.sector_id). Returns ALL hours of those
       // employees even when they marked at a different sector that day.
-      const allRows: { employeeName: string; dni: string; sectorName: string; recordSectorName: string; hours: number; date: string }[] = [];
+      const allRows: { employeeName: string; dni: string; sectorName: string; recordSectorName: string; hours: number | string; date: string }[] = [];
       let totalHours = 0;
 
       await Promise.all(category.sectors.map(async (sectorName) => {
@@ -817,10 +824,16 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
           if (att.status === 'Faltante') continue;
           // work_value is the real hours field in Turso (direct hours, not minutes)
           const raw = att.work_value ?? att.minutes_worked ?? att.hours ?? '';
-          const str = String(raw);
-          if (!str || str === 'null' || str.startsWith('$') || str.toUpperCase() === 'C') continue;
-          const hrs = Number(str);
-          if (isNaN(hrs) || hrs <= 0) continue;
+          const str = String(raw).trim();
+          if (!str || str === 'null') continue;
+
+          let valForPdf: number | string = str;
+          const numericVal = parseFloat(str);
+          if (!isNaN(numericVal)) {
+            if (numericVal <= 0) continue;
+            valForPdf = numericVal;
+            totalHours += numericVal;
+          }
 
           const name = `${att.first_name || ''} ${att.last_name || ''}`.trim() || 'Sin nombre';
           const dni = att.dni && att.dni !== 'null' ? att.dni : 'SIN DATOS';
@@ -829,8 +842,7 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
           const assignedSector = att.assigned_sector_name || sectorName;
           const recordSector = att.record_sector_name || assignedSector;
 
-          totalHours += hrs;
-          allRows.push({ employeeName: name, dni, sectorName: assignedSector, recordSectorName: recordSector, hours: hrs, date: att.date || '' });
+          allRows.push({ employeeName: name, dni, sectorName: assignedSector, recordSectorName: recordSector, hours: valForPdf, date: att.date || '' });
         }
       }));
 
@@ -982,9 +994,14 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
                 className="bg-transparent text-white outline-none cursor-pointer"
                 style={{ fontSize: 12, fontWeight: 600 }}
               >
-                {MONTHS_ES.map((m, i) => (
-                  <option key={i} value={i + 1} style={{ background: "#1e1e2e" }}>{m}</option>
-                ))}
+                {MONTHS_ES.map((m, i, arr) => {
+                  const prevMonth = arr[i === 0 ? 11 : i - 1];
+                  return (
+                    <option key={i} value={i + 1} style={{ background: "#1e1e2e" }}>
+                      21 {prevMonth.substring(0,3)} - 20 {m.substring(0,3)} ({m})
+                    </option>
+                  );
+                })}
               </select>
               <select
                 value={periodYear}

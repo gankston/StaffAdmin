@@ -158,6 +158,8 @@ export async function generatePdfReport(
     tmpFile = path.join(app.getPath('temp'), `staffadmin-report-${Date.now()}-${Math.random().toString(36).slice(2)}.html`);
     fs.writeFileSync(tmpFile, buildHTML(params), 'utf-8');
     await win.loadFile(tmpFile);
+    // Wait a brief moment for layout/paint to complete for massive tables
+    await new Promise(resolve => setTimeout(resolve, 800));
 
     const buf = await win.webContents.printToPDF({
       printBackground: true,

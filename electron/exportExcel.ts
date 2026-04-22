@@ -23,6 +23,7 @@ export interface ExportParams {
         date?: string;
         hours?: number | null;
         status?: string | null;
+        record_sector_name?: string | null;
         [key: string]: any;
     }>;
     absences?: Array<{       // ausencias de /api/absences
@@ -76,7 +77,7 @@ export async function exportExcel(
         // ── Create workbook and matrix ────────────────────────────────────
         const wb = XLSX.utils.book_new();
         // 1. Inicializar la matriz con las filas iniciales
-        const filaCabeceras = ['N', 'DNI', params?.sectorName ?? 'SECTOR', ...daysArr, 'TOTAL'];
+        const filaCabeceras = ['N', 'DNI', params?.sectorName ?? 'SECTOR', ...daysArr, 'TOTAL', 'OBSERVACIONES'];
         const excelData: (string | number | null)[][] = [
             ['ENCARGADO'],
             [params?.encargado || 'SERGIO GODOY'],
@@ -107,6 +108,9 @@ export async function exportExcel(
             const empAtts = attendances.filter(a => String(a.employee_id) === String(emp.id) || (emp.dni && a.dni === emp.dni));
             const empAbsences = absencesByEmp.get(emp.id) ?? [];
 
+            // Mapa para desglose por sector anterior
+            const foreignSectorsMap = new Map<string, number>();
+
             const horasDelEmpleado = dateStrings.map(dateStr => {
                 // PRIORIDAD 1: ausencia registrada que cubre este día → AUSENTE
                 const isAbsent = empAbsences.some(abs => abs.start <= dateStr && dateStr <= abs.end);
@@ -118,10 +122,24 @@ export async function exportExcel(
                     if (att.status === 'Faltante') {
                         return 'AUSENTE';
                     } else {
-                        const hrs = att.hours ?? '';
-                        if (typeof hrs === 'number') totalHorasEmpleado += hrs;
-                        if (typeof hrs === 'string' && !isNaN(Number(hrs)) && hrs !== '') totalHorasEmpleado += Number(hrs);
-                        return hrs;
+                        // work_value puede ser '8', 'C', '$500', o un número legacy
+                        const rawVal = att.work_value ?? att.hours ?? '';
+                        const valStr = String(rawVal).trim();
+                        if (valStr === '' || valStr === 'null') return '';
+                        const numericVal = parseFloat(valStr);
+                        if (!isNaN(numericVal)) {
+                            totalHorasEmpleado += numericVal;
+                            
+                            // Si el registro es de OTRO sector, lo sumamos al desglose informativos (para traslados)
+                            if (att.record_sector_name && att.record_sector_name !== params?.sectorName) {
+                                const currentSum = foreignSectorsMap.get(att.record_sector_name) ?? 0;
+                                foreignSectorsMap.set(att.record_sector_name, currentSum + numericVal);
+                            }
+                            
+                            return numericVal;
+                        }
+                        // 'C' or '$500' - special types, don't add to total
+                        return valStr;
                     }
                 } else {
                     return ''; // sin horas cargadas
@@ -130,13 +148,21 @@ export async function exportExcel(
 
             granTotalHoras += totalHorasEmpleado;
 
+            // Construir la nota de sectores anteriores si existen traslados
+            let notaOtrosSectores = '';
+            foreignSectorsMap.forEach((horas, sectorName) => {
+                if (notaOtrosSectores) notaOtrosSectores += ' | ';
+                notaOtrosSectores += `${horas} hs en ${sectorName.toUpperCase()}`;
+            });
+
             // CRÍTICO: Agregar la fila del empleado a excelData
             excelData.push([
                 index + 1,
                 emp.dni || (emp as any).document_number || (emp as any).document || 'Sin datos',
                 `${emp.last_name} ${emp.first_name}`.trim(),
                 ...horasDelEmpleado,
-                totalHorasEmpleado
+                totalHorasEmpleado,
+                notaOtrosSectores // Columna de OBSERVACIONES
             ]);
         });
 
