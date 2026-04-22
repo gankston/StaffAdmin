@@ -161,16 +161,19 @@ export async function fetchSectors(): Promise<UiSector[]> {
                 let hasAttendancesToday = false;
 
                 try {
+                    const ctrl = new AbortController();
+                    const timeout = setTimeout(() => ctrl.abort(), 8000); // 8s per sector
                     const [empRes, attRes] = await Promise.all([
                         fetch(
                             `${API_BASE}/api/employees?sector_id=${encodeURIComponent(sector.apiId)}`,
-                            { headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } }
+                            { headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }, signal: ctrl.signal }
                         ),
                         fetch(
                             `${API_BASE}/api/attendances?sector_id=${encodeURIComponent(sector.apiId)}&start_date=${today}&end_date=${today}`,
-                            { headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } }
+                            { headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }, signal: ctrl.signal }
                         )
                     ]);
+                    clearTimeout(timeout);
 
                     if (empRes.ok) {
                         const empData: any = await empRes.json();
