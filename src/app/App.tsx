@@ -212,6 +212,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
   const [exporting, setExporting] = useState(false);
   const [absentEmployeeIds, setAbsentEmployeeIds] = useState<Set<string>>(new Set());
   const [absenceLoading, setAbsenceLoading] = useState(false);
+  const [localSearch, setLocalSearch] = useState("");
   const isMissing = sector.state === "missing";
 
   // Fecha de hoy en formato YYYY-MM-DD
@@ -461,6 +462,18 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
               </span>
             )}
           </div>
+          
+          <div className="mb-3 px-3 py-1.5 rounded-xl flex items-center gap-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <Search size={12} color="rgba(255,255,255,0.4)" />
+            <input 
+              placeholder="Buscar empleado..." 
+              value={localSearch}
+              onChange={e => setLocalSearch(e.target.value)}
+              className="bg-transparent outline-none w-full text-white placeholder-white/30"
+              style={{ fontSize: 12 }}
+            />
+          </div>
+
           {empLoading ? (
             <div className="flex items-center gap-3 py-3">
               <div className="rounded-full flex-shrink-0" style={{ width: 18, height: 18, border: "2px solid rgba(255,255,255,0.1)", borderTop: "2px solid #9C27B0", animation: "spin 0.8s linear infinite" }} />
@@ -472,7 +485,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
             </div>
           ) : (
             <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
-              {employees.map((emp) => {
+              {employees.filter(emp => `${emp.first_name || ''} ${emp.last_name || ''} ${emp.dni || ''}`.toLowerCase().includes(localSearch.toLowerCase())).map((emp) => {
                 const isAbsent = absentEmployeeIds.has(emp.id);
                 return (
                   <div
@@ -782,6 +795,7 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [empLoading, setEmpLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [localSearch, setLocalSearch] = useState("");
 
   // Current period (same 21→20 rule as FloatingModal) — default, user can change
   const nowForPeriod = new Date();
@@ -908,7 +922,7 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
       <div className="flex flex-col gap-4">
         {/* Breadcrumb */}
         <div className="flex items-center gap-3">
-          <BackBtn onClick={() => setView({ step: 'sectors', category })} />
+          <BackBtn onClick={() => { setView({ step: 'sectors', category }); setLocalSearch(""); }} />
           <div className="flex items-center gap-2" style={{ fontSize: 13 }}>
             <span
               className="cursor-pointer transition-colors hover:text-white/70"
@@ -918,6 +932,17 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
             <ChevronRight size={13} color="rgba(255,255,255,0.25)" />
             <span className="text-white font-bold" style={{ fontSize: 15 }}>{sectorName}</span>
           </div>
+        </div>
+
+        <div className="px-4 py-2 rounded-xl flex items-center gap-2" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", width: 300 }}>
+          <Search size={14} color="rgba(255,255,255,0.4)" />
+          <input 
+            placeholder="Buscar empleado..." 
+            value={localSearch}
+            onChange={e => setLocalSearch(e.target.value)}
+            className="bg-transparent outline-none w-full text-white placeholder-white/40"
+            style={{ fontSize: 13 }}
+          />
         </div>
 
         {empLoading && (
@@ -943,12 +968,12 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
           <div className="flex flex-col gap-0 rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.07)" }}>
             {/* Table header */}
             <div className="grid px-5 py-3" style={{ gridTemplateColumns: "2fr 1fr 1fr", background: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-              <span className="text-white/40 uppercase tracking-wider font-semibold" style={{ fontSize: 10 }}>Empleado · {employees.length} en total</span>
+              <span className="text-white/40 uppercase tracking-wider font-semibold" style={{ fontSize: 10 }}>Empleado</span>
               <span className="text-white/40 uppercase tracking-wider font-semibold" style={{ fontSize: 10 }}>DNI</span>
               <span className="text-white/40 uppercase tracking-wider font-semibold" style={{ fontSize: 10 }}>Código</span>
             </div>
             {/* Rows */}
-            {employees.map((emp, i) => (
+            {employees.filter(emp => `${emp.first_name || ''} ${emp.last_name || ''} ${emp.dni || ''}`.toLowerCase().includes(localSearch.toLowerCase())).map((emp, i) => (
               <div
                 key={emp.id}
                 className="grid items-center px-5 py-3 transition-colors hover:bg-white/5"
@@ -1079,6 +1104,17 @@ export default function App() {
   
   const [searchQuery, setSearchQuery] = useState("");
   const [globalStats, setGlobalStats] = useState({ ausentes: 0, horasTotales: 0 });
+
+  // Global Employee Search derived state
+  const employeeSearchResults = useMemo(() => {
+    if (searchQuery.length < 2) return [];
+    const q = searchQuery.toLowerCase();
+    return sectors.flatMap(s => (s.employeesList || [])
+      .filter(e => `${e.first_name || ''} ${e.last_name || ''} ${e.dni || ''}`.toLowerCase().includes(q))
+      .map(e => ({ emp: e, sector: s }))
+    ).slice(0, 15);
+  }, [searchQuery, sectors]);
+
   // States for Authentication (Login / Logout)
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
@@ -1542,14 +1578,35 @@ export default function App() {
               <p className="text-white/40" style={{ fontSize: 12 }}>Panel de Control</p>
             </div>
           </div>
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", width: 340 }}>
-            <Search size={16} color="rgba(255,255,255,0.4)" />
-            <input 
-              placeholder="Buscar sector o empleado…" 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-transparent outline-none w-full text-white placeholder-white/40" style={{ fontSize: 14 }} 
-            />
+          <div className="relative">
+            <div className="flex items-center gap-3 px-4 py-3 rounded-xl relative z-20" style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", width: 340 }}>
+              <Search size={16} color="rgba(255,255,255,0.4)" />
+              <input 
+                placeholder="Buscar sector o empleado…" 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="bg-transparent outline-none w-full text-white placeholder-white/40" style={{ fontSize: 14 }} 
+              />
+            </div>
+            {/* Global Employee Search Results */}
+            {searchQuery.length >= 2 && employeeSearchResults.length > 0 && (
+              <div className="absolute top-[110%] left-0 w-full max-h-[300px] overflow-y-auto rounded-xl bg-[#2A2A3E] border border-white/10 shadow-2xl z-50 flex flex-col hide-scrollbar py-2">
+                <p className="text-white/40 uppercase tracking-widest px-4 py-2 mb-1" style={{ fontSize: 10, fontWeight: 700 }}>Empleados encontrados</p>
+                {employeeSearchResults.map(({emp, sector}, idx) => (
+                  <button 
+                    key={`${emp.id}-${idx}`}
+                    onClick={() => {
+                        setSearchQuery('');
+                        setSelectedSector(sector);
+                    }}
+                    className="flex flex-col text-left px-4 py-2 hover:bg-white/5 transition-colors"
+                  >
+                    <span className="text-white font-semibold" style={{ fontSize: 13 }}>{emp.first_name} {emp.last_name}</span>
+                    <span className="text-[#c86fe8]" style={{ fontSize: 11, fontWeight: 600 }}>Sector: {sector.name} {emp.dni ? `• DNI: ${emp.dni}` : ''}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-4" style={{ paddingRight: 120 }}>
             {/* Adjust 3: Notifications Dropdown */}

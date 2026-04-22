@@ -29,6 +29,7 @@ export interface UiSector {
     icon: string;
     encargado: string;
     trend: number;
+    employeesList?: ApiEmployee[];
 }
 
 // ─── Employee DTOs ──────────────────────────────────────────────────────────
@@ -177,9 +178,13 @@ export async function fetchSectors(): Promise<UiSector[]> {
                     ]);
                     clearTimeout(timeout);
 
+                    let empList: ApiEmployee[] = [];
                     if (empRes.ok) {
                         const empData: any = await empRes.json();
-                        count = Array.isArray(empData.employees) ? empData.employees.length : 0;
+                        if (Array.isArray(empData.employees)) {
+                            count = empData.employees.length;
+                            empList = empData.employees;
+                        }
                     }
 
                     if (attRes.ok) {
@@ -192,6 +197,7 @@ export async function fetchSectors(): Promise<UiSector[]> {
                     return {
                         ...sector,
                         employees: count,
+                        employeesList: empList,
                         state: hasAttendancesToday ? 'sent' : 'missing' as 'sent' | 'missing'
                     };
                 } catch {
