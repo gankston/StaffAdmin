@@ -797,7 +797,8 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
       const adminToken = rawToken === "undefined" ? "" : rawToken;
 
       // Fetch attendances for all sectors in the category in parallel
-      // One row per attendance record (not aggregated) — matches Turso data structure
+      // API filters by employee's ASSIGNED sector (e.sector_id). Returns ALL hours of those
+      // employees even when they marked at a different sector that day.
       const allRows: { employeeName: string; dni: string; sectorName: string; recordSectorName: string; hours: number; date: string }[] = [];
       let totalHours = 0;
 
@@ -819,18 +820,21 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
 
           const name = `${att.first_name || ''} ${att.last_name || ''}`.trim() || 'Sin nombre';
           const dni = att.dni && att.dni !== 'null' ? att.dni : 'SIN DATOS';
-          const recordSector = att.record_sector_name || att.sector_name || sectorName;
+          // assigned_sector_name = último sector asignado (donde el empleado cobra)
+          // record_sector_name   = donde se marcaron las horas ese día específico
+          const assignedSector = att.assigned_sector_name || sectorName;
+          const recordSector = att.record_sector_name || assignedSector;
 
           totalHours += hrs;
-          allRows.push({ employeeName: name, dni, sectorName, recordSectorName: recordSector, hours: hrs, date: att.date || '' });
+          allRows.push({ employeeName: name, dni, sectorName: assignedSector, recordSectorName: recordSector, hours: hrs, date: att.date || '' });
         }
       }));
 
-      // Sort by employee name, then date
+      // Sort by employee name, then date (most recent first per employee)
       allRows.sort((a, b) => {
         const n = a.employeeName.localeCompare(b.employeeName, 'es');
         if (n !== 0) return n;
-        return a.date.localeCompare(b.date);
+        return b.date.localeCompare(a.date);
       });
       totalHours = Math.round(totalHours * 10) / 10;
 

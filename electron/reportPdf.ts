@@ -128,7 +128,7 @@ function buildHTML(params: PdfReportParams): string {
       <tr>
         <th>Nombre y Apellido</th>
         <th>DNI</th>
-        <th>Sector</th>
+        <th>Último Sector</th>
         <th>Donde se marcó</th>
         <th class="num">Horas</th>
         <th class="date">Fecha</th>
