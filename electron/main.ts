@@ -124,7 +124,12 @@ app.whenReady().then(() => {
     ipcMain.handle('toggle-sector', (_event, id) => toggleSectorState(id));
     ipcMain.handle('get-attendances', async (_event, sectorId: string, startDate: string, endDate: string, adminToken?: string) => {
         try {
-            return await fetchAttendances(sectorId, startDate, endDate, adminToken);
+            const result = await fetchAttendances(sectorId, startDate, endDate, adminToken);
+            if (result.length > 0) {
+                log.info(`[IPC get-attendances] Sample record keys for ${sectorId}: ${JSON.stringify(Object.keys(result[0]))}`);
+                log.info(`[IPC get-attendances] Sample record: ${JSON.stringify(result[0])}`);
+            }
+            return result;
         } catch (error) {
             console.error(`[IPC get-attendances] Failed for ${sectorId}:`, error);
             return [];

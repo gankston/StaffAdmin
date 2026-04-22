@@ -3,8 +3,10 @@ import { BrowserWindow } from 'electron';
 export interface ReportRow {
   employeeName: string;
   dni: string;
-  sectorName: string;
-  value: string;
+  sectorName: string;        // sector de la categoría (de donde se extrajo)
+  recordSectorName: string;  // record_sector_name — donde se marcaron las horas
+  hours: number;             // work_value (en horas)
+  date: string;              // YYYY-MM-DD
 }
 
 export interface PdfReportParams {
@@ -20,6 +22,12 @@ const MONTH_NAMES_ES = [
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
 ];
 
+function fmtDate(iso: string): string {
+  // "2026-04-20" → "20/04/2026"
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
 function buildHTML(params: PdfReportParams): string {
   const { categoryName, periodMonth, periodYear, rows, totalHours } = params;
   const fromMonth = periodMonth === 1 ? 12 : periodMonth - 1;
@@ -28,17 +36,19 @@ function buildHTML(params: PdfReportParams): string {
   const today = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
   const totalRow = totalHours != null
-    ? `<tr class="total-row"><td colspan="3"><strong>TOTAL HORAS</strong></td><td class="value">${totalHours} hs</td></tr>`
+    ? `<tr class="total-row"><td colspan="5"><strong>TOTAL HORAS</strong></td><td class="num">${totalHours}</td></tr>`
     : '';
 
   const tableRows = rows.length === 0
-    ? `<tr><td colspan="4" class="empty">Sin registros para este período</td></tr>${totalRow}`
+    ? `<tr><td colspan="6" class="empty">Sin registros para este período</td></tr>${totalRow}`
     : rows.map(r => `
         <tr>
           <td class="name">${r.employeeName}</td>
           <td class="dni">${r.dni}</td>
           <td>${r.sectorName}</td>
-          <td class="value">${r.value}</td>
+          <td class="loc">${r.recordSectorName}</td>
+          <td class="num">${r.hours}</td>
+          <td class="date">${fmtDate(r.date)}</td>
         </tr>`).join('') + totalRow;
 
   return `<!DOCTYPE html>
@@ -49,15 +59,15 @@ function buildHTML(params: PdfReportParams): string {
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: 'Segoe UI', Arial, sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     color: #111;
-    padding: 40px 48px;
+    padding: 32px 40px;
     background: white;
   }
-  .header { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 3px solid #1a1a2e; }
-  h1 { font-size: 20px; font-weight: 900; color: #1a1a2e; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .header { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 3px solid #1a1a2e; }
+  h1 { font-size: 18px; font-weight: 900; color: #1a1a2e; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
   .meta { display: flex; gap: 28px; }
-  .meta span { font-size: 10px; color: #666; }
+  .meta span { font-size: 9px; color: #666; }
   .meta strong { color: #333; }
   .badge {
     display: inline-block;
@@ -65,37 +75,39 @@ function buildHTML(params: PdfReportParams): string {
     border: 1px solid #d8d8ee;
     border-radius: 4px;
     padding: 3px 10px;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
     color: #444;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
   table { width: 100%; border-collapse: collapse; }
   thead tr { background: #1a1a2e; }
   thead th {
-    padding: 10px 14px;
+    padding: 8px 10px;
     text-align: left;
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: white;
   }
-  thead th:last-child { text-align: right; }
+  thead th.num, thead th.date { text-align: right; }
   tbody tr { border-bottom: 1px solid #e4e4f0; }
   tbody tr:nth-child(even) { background: #f7f7fc; }
-  tbody td { padding: 9px 14px; vertical-align: middle; }
+  tbody td { padding: 7px 10px; vertical-align: middle; }
   td.name { font-weight: 700; }
-  td.dni { font-family: 'Courier New', monospace; color: #555; font-size: 10px; }
-  td.value { text-align: right; font-weight: 700; color: #1a1a2e; }
-  td.empty { text-align: center; color: #999; padding: 32px; font-style: italic; }
-  tr.total-row td { background: #1a1a2e; color: white; font-weight: 900; padding: 10px 14px; font-size: 11px; }
-  tr.total-row td.value { text-align: right; color: #7dd3fc; font-size: 13px; }
+  td.dni { font-family: 'Courier New', monospace; color: #555; font-size: 9px; }
+  td.loc { color: #2563eb; font-weight: 600; }
+  td.num { text-align: right; font-weight: 700; color: #1a1a2e; }
+  td.date { text-align: right; color: #555; font-size: 9px; }
+  td.empty { text-align: center; color: #999; padding: 28px; font-style: italic; }
+  tr.total-row td { background: #1a1a2e; color: white; font-weight: 900; padding: 9px 10px; font-size: 10px; }
+  tr.total-row td.num { text-align: right; color: #7dd3fc; font-size: 13px; }
   .footer {
-    margin-top: 20px;
-    padding-top: 10px;
+    margin-top: 18px;
+    padding-top: 8px;
     border-top: 1px solid #ddd;
-    font-size: 9px;
+    font-size: 8px;
     color: #aaa;
     display: flex;
     justify-content: space-between;
@@ -114,10 +126,12 @@ function buildHTML(params: PdfReportParams): string {
   <table>
     <thead>
       <tr>
-        <th>Empleado</th>
+        <th>Nombre y Apellido</th>
         <th>DNI</th>
         <th>Sector</th>
-        <th>Registro</th>
+        <th>Donde se marcó</th>
+        <th class="num">Horas</th>
+        <th class="date">Fecha</th>
       </tr>
     </thead>
     <tbody>${tableRows}</tbody>
