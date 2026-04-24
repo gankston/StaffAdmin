@@ -1162,7 +1162,7 @@ export default function App() {
     } catch { }
     return null;
   };
-  const isAdmin = ['admin', 'mabel'].includes(getAdminUsername() || '');
+  const isAdmin = ['admin', 'mabel.salvita'].includes(getAdminUsername() || '');
 
   useEffect(() => {
     // Fetch real notifications from the backend API
