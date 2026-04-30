@@ -2,6 +2,7 @@ import { BrowserWindow, dialog } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as XLSX from 'xlsx';
+import { nowPartsInAppTz } from './datetime';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -48,29 +49,36 @@ export async function exportExcel(
     params?: ExportParams
 ): Promise<{ success: boolean; base64?: string; fileName?: string; error?: string }> {
     try {
-        const pMonth = params?.periodMonth ?? (new Date().getMonth() + 1);
-        const pYear = params?.periodYear ?? new Date().getFullYear();
+        // Defaults de período en TZ Argentina (no TZ del SO).
+        const _today = nowPartsInAppTz();
+        const pMonth = params?.periodMonth ?? _today.month;
+        const pYear = params?.periodYear ?? _today.year;
 
         // ── Generate days array for columns ──────────────────────────────────
-        // From 21st of previous month to 20th of current month
+        // From 21st of previous month to 20th of current month.
+        // Iteramos con UTC para que la suma de días no sufra DST/TZ shifts.
+        // Las fechas resultantes son strings puros "YYYY-MM-DD", sin TZ.
         const fromMonth = pMonth === 1 ? 12 : pMonth - 1;
         const fromYear = pMonth === 1 ? pYear - 1 : pYear;
-        const prevMonthDate = new Date(fromYear, fromMonth - 1, 21);
-        const currMonthDate = new Date(pYear, pMonth - 1, 20);
+        const startUtc = Date.UTC(fromYear, fromMonth - 1, 21);
+        const endUtc = Date.UTC(pYear, pMonth - 1, 20);
+        const ONE_DAY_MS = 86_400_000;
 
         const daysArr: string[] = [];
         const dateStrings: string[] = []; // YYYY-MM-DD to match attendances
 
-        for (let d = new Date(prevMonthDate); d <= currMonthDate; d.setDate(d.getDate() + 1)) {
-            daysArr.push(String(d.getDate()));
-            dateStrings.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+        for (let t = startUtc; t <= endUtc; t += ONE_DAY_MS) {
+            const d = new Date(t);
+            daysArr.push(String(d.getUTCDate()));
+            dateStrings.push(
+                `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+            );
         }
 
-        // ── Build filename: asistenciaSECTOR_DD_MM_YYYY.xlsx ──
-        const now = new Date();
-        const dd = String(now.getDate()).padStart(2, '0');
-        const mm = String(now.getMonth() + 1).padStart(2, '0');
-        const yyyy = String(now.getFullYear());
+        // ── Build filename: asistenciaSECTOR_DD_MM_YYYY.xlsx (TZ Argentina) ──
+        const dd = String(_today.day).padStart(2, '0');
+        const mm = String(_today.month).padStart(2, '0');
+        const yyyy = String(_today.year);
         const sectorSlug = (params?.sectorName ?? 'SECTOR').replace(/\s+/g, '_').toUpperCase();
         const fileName = `asistencia${sectorSlug}_${dd}_${mm}_${yyyy}.xlsx`;
 

@@ -95,13 +95,18 @@ app.whenReady().then(() => {
     createWindow();
     
     if (!isDev) {
-        // Dividimos el token para que el escáner automático de GitHub no lo revoque
-        const part1 = "github_pat_11AS4SKYI08jNFPYhoLgb1_c05W7rUb1Hg3lM";
-        const part2 = "qypOJ5p5CqEWnacqDmVtHENDiY9oDSPZKPAGCIgqgZS3k";
-
-        autoUpdater.requestHeaders = {
-            "Authorization": "Bearer " + part1 + part2
-        };
+        // ─── Update channel ──────────────────────────────────────────────
+        // Antes: el cliente embebía un GitHub PAT (split en dos strings) para
+        // poder leer releases del repo privado gankston/StaffAdmin. Quedaba
+        // recuperable con `asar extract` del NSIS instalado.
+        //
+        // Ahora: el cliente apunta a /api/updates del Worker (StaffAxis API),
+        // que proxea las descargas con el PAT viviendo solo en el secret
+        // GITHUB_RELEASES_PAT del Worker. Cliente queda sin secretos.
+        autoUpdater.setFeedURL({
+            provider: 'generic',
+            url: 'https://staffaxis-api-prod.pgastonor.workers.dev/api/updates',
+        });
         autoUpdater.checkForUpdates();
     }
 

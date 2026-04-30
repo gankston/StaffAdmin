@@ -6,6 +6,8 @@
  * Endpoint: GET https://staffaxis-api-prod.pgastonor.workers.dev/api/sectors
  */
 
+import { todayInAppTz } from './datetime';
+
 // ─── DTOs (API Response Shape) ─────────────────────────────────────────────
 
 export interface ApiSector {
@@ -30,6 +32,13 @@ export interface UiSector {
     encargado: string;
     trend: number;
     employeesList?: ApiEmployee[];
+    /**
+     * Attendances de HOY para este sector. fetchSectors ya las baja para
+     * decidir el estado sent/missing — se exponen acá para que App.tsx
+     * pueda calcular stats globales sin volver a pedirlas (eliminaba ~20
+     * requests redundantes en cada refresh).
+     */
+    attendancesToday?: ApiAttendance[];
 }
 
 // ─── Employee DTOs ──────────────────────────────────────────────────────────
@@ -154,9 +163,10 @@ export async function fetchSectors(): Promise<UiSector[]> {
         // This fills in sector.employees with the real count from the API.
         // It also checks if there are attendances for TODAY to determine the state.
 
-        const now = new Date();
-        // Format today as YYYY-MM-DD
-        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        // "Hoy" según TZ Argentina, no según TZ del SO del cliente.
+        // Esto evita que un encargado de noche (22:30 ART) pregunte por
+        // "mañana UTC" y el server le responda con sectores vacíos.
+        const today = todayInAppTz();
 
         const enriched = await Promise.all(
             baseSectors.map(async (sector) => {
@@ -187,17 +197,22 @@ export async function fetchSectors(): Promise<UiSector[]> {
                         }
                     }
 
+                    let attsToday: ApiAttendance[] = [];
                     if (attRes.ok) {
                         const attData: any = await attRes.json();
-                        // Verify if any attendance explicitly matches today's date
-                        hasAttendancesToday = Array.isArray(attData.attendances) &&
-                            attData.attendances.some((a: any) => a.date && a.date.startsWith(today));
+                        if (Array.isArray(attData.attendances)) {
+                            // Filtramos solo las que matchean exactamente HOY
+                            // (la API a veces devuelve registros adyacentes por timezone).
+                            attsToday = attData.attendances.filter((a: any) => a.date && a.date.startsWith(today));
+                            hasAttendancesToday = attsToday.length > 0;
+                        }
                     }
 
                     return {
                         ...sector,
                         employees: count,
                         employeesList: empList,
+                        attendancesToday: attsToday,
                         state: hasAttendancesToday ? 'sent' : 'missing' as 'sent' | 'missing'
                     };
                 } catch {
