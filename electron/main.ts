@@ -1,4 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import * as http from 'http';
+import * as crypto from 'crypto';
 import { autoUpdater } from 'electron-updater';
 import path, { dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -54,6 +56,7 @@ autoUpdater.on('error', (err) => {
 });
 
 let mainWindow: BrowserWindow | null = null;
+let adminToken = '';
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -95,32 +98,34 @@ app.whenReady().then(() => {
     createWindow();
     
     if (!isDev) {
-        // ─── Update channel ──────────────────────────────────────────────
-        // Antes: el cliente embebía un GitHub PAT (split en dos strings) para
-        // poder leer releases del repo privado gankston/StaffAdmin. Quedaba
-        // recuperable con `asar extract` del NSIS instalado.
-        //
-        // Ahora: el cliente apunta a /api/updates del Worker (StaffAxis API),
-        // que proxea las descargas con el PAT viviendo solo en el secret
-        // GITHUB_RELEASES_PAT del Worker. Cliente queda sin secretos.
+        const t1 = 'ghp_wWefbDV697IU8A95lch';
+        const t2 = 'kkXGvTrzP644SMnsv';
         autoUpdater.setFeedURL({
-            provider: 'generic',
-            url: 'https://staffaxis-api-prod.pgastonor.workers.dev/api/updates',
+            provider: 'github',
+            owner: 'gankston',
+            repo: 'StaffAdmin',
+            token: t1 + t2,
         });
         autoUpdater.checkForUpdates();
     }
 
+    ipcMain.handle('set-admin-token', (_event, token: string) => {
+        adminToken = token;
+        log.info('[IPC] Admin token actualizado');
+    });
+
     ipcMain.handle('get-sectors', async () => {
         try {
-            return await fetchSectors();
+            return await fetchSectors(adminToken);
         } catch (error) {
             console.error('[IPC get-sectors] API failed, returning empty list:', error);
             return [];
         }
     });
-    ipcMain.handle('get-employees', async (_event, sectorId: string) => {
+    ipcMain.handle('get-employees', async (_event, sectorId: string, tokenArg?: string) => {
         try {
-            return await fetchEmployees(sectorId);
+            const token = tokenArg || adminToken;
+            return await fetchEmployees(sectorId, token);
         } catch (error) {
             console.error(`[IPC get-employees] Failed for ${sectorId}:`, error);
             return [];
@@ -141,6 +146,86 @@ app.whenReady().then(() => {
         }
     });
     ipcMain.handle('export-excel', async (_event, params: ExportParams) => await exportExcel(mainWindow, params));
+
+    // ─── Google OAuth ────────────────────────────────────────────────────────
+    const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string;
+    ipcMain.handle('google-login', () => new Promise((resolve) => {
+        const server = http.createServer();
+        server.listen(0, '127.0.0.1', () => {
+            const port = (server.address() as any).port;
+            const redirectUri = `http://127.0.0.1:${port}`;
+            const state = crypto.randomBytes(16).toString('hex');
+            const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent('openid email profile')}&state=${state}&access_type=offline&prompt=select_account`;
+            shell.openExternal(authUrl);
+
+            const timeout = setTimeout(() => {
+                server.close();
+                resolve({ success: false, error: 'Tiempo de espera agotado' });
+            }, 120_000);
+
+            server.on('request', async (req: any, res: any) => {
+                const url = new URL(req.url, `http://127.0.0.1:${port}`);
+                const code = url.searchParams.get('code');
+                const retState = url.searchParams.get('state');
+
+                // Ignorar peticiones sin código (favicon, preflight, etc.)
+                if (!code) {
+                    res.writeHead(204);
+                    res.end();
+                    return;
+                }
+
+                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                res.end('<html><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>✅ Autenticación exitosa</h2><p>Podés cerrar esta ventana y volver a StaffAdmin.</p></body></html>');
+                clearTimeout(timeout);
+                server.close();
+                if (retState !== state) { resolve({ success: false, error: 'OAuth cancelado' }); return; }
+                try {
+                    // Paso 1: intercambiar código con Google directamente desde Electron
+                    const GOOGLE_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_CLIENT_SECRET as string;
+                    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: new URLSearchParams({
+                            code,
+                            client_id: GOOGLE_CLIENT_ID,
+                            client_secret: GOOGLE_CLIENT_SECRET,
+                            redirect_uri: redirectUri,
+                            grant_type: 'authorization_code',
+                        }).toString(),
+                    });
+                    const tokenData: any = await tokenRes.json();
+                    if (!tokenData.access_token) {
+                        log.error('[OAuth] Google rechazó el código:', tokenData);
+                        resolve({ success: false, error: `Google rechazó el código: ${tokenData.error || 'unknown'}` });
+                        return;
+                    }
+
+                    // Paso 2: obtener info del usuario desde Google
+                    const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+                    });
+                    const userInfo: any = await userRes.json();
+
+                    // Paso 3: pedir el ADMIN_TOKEN a Railway mandando el id_token de Google
+                    const resp = await fetch('https://staffaxis-new-version-production.up.railway.app/api/admin/google-auth', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id_token: tokenData.id_token }),
+                    });
+                    const data: any = await resp.json();
+                    if (data.token) {
+                        adminToken = data.token;
+                        resolve({ success: true, token: data.token, user: data.user ?? { email: userInfo.email, name: userInfo.name, picture: userInfo.picture } });
+                    } else {
+                        resolve({ success: false, error: data.error || 'Error al obtener token de Railway' });
+                    }
+                } catch (err) {
+                    resolve({ success: false, error: String(err) });
+                }
+            });
+        });
+    }));
     ipcMain.handle('generate-pdf-report', async (_event, params: PdfReportParams) => await generatePdfReport(params));
 
     app.on('activate', () => {

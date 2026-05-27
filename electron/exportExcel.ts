@@ -8,6 +8,7 @@ import { nowPartsInAppTz } from './datetime';
 
 export interface ExportParams {
     sectorName: string;
+    sectorId?: string;
     encargado?: string | null;
     employees: Array<{
         id: string;
@@ -31,6 +32,14 @@ export interface ExportParams {
         employee_id: string;
         start_date: string;  // YYYY-MM-DD
         end_date: string;    // YYYY-MM-DD
+        [key: string]: any;
+    }>;
+    transfers?: Array<{      // traslados del período
+        employee_id: string;
+        from_sector_id: string | null;
+        to_sector_id: string;
+        from_sector_name: string | null;
+        to_sector_name: string;
         [key: string]: any;
     }>;
     periodMonth: number;
@@ -99,6 +108,27 @@ export async function exportExcel(
         const attendances = params?.attendances ?? [];
         const absences = params?.absences ?? [];
         const employees = params?.employees ?? [];
+        const transfers = params?.transfers ?? [];
+
+        // Lookup rápido de traslados por employee_id
+        // "saliente": from_sector_id == este sector → "Se fue a X"
+        // "entrante": to_sector_id   == este sector → "Viene de X"
+        const transferOutMap = new Map<string, string>(); // empId → nombre sector destino
+        const transferInMap  = new Map<string, string>(); // empId → nombre sector origen
+        const currentSectorId = params?.sectorId;
+        transfers.forEach(t => {
+            if (currentSectorId && t.to_sector_id === currentSectorId) {
+                // El empleado ENTRÓ a este sector, viene de from_sector_name
+                if (t.from_sector_name) transferInMap.set(t.employee_id, t.from_sector_name);
+            } else if (currentSectorId && t.from_sector_id === currentSectorId) {
+                // El empleado SALIÓ de este sector, se fue a to_sector_name
+                if (t.to_sector_name) transferOutMap.set(t.employee_id, t.to_sector_name);
+            } else {
+                // Sin sectorId disponible: fallback (ambos mapas como antes)
+                if (t.to_sector_name) transferOutMap.set(t.employee_id, t.to_sector_name);
+                if (t.from_sector_name) transferInMap.set(t.employee_id, t.from_sector_name);
+            }
+        });
 
         console.log(`[exportExcel] Procesando ${employees.length} empleados, ${attendances.length} asistencias, ${absences.length} ausencias`);
 
@@ -163,6 +193,10 @@ export async function exportExcel(
                 notaOtrosSectores += `${horas} hs en ${sectorName.toUpperCase()}`;
             });
 
+            // Observación: traslado entrante
+            const fromSector = transferInMap.get(emp.id);
+            if (fromSector && !notaOtrosSectores) notaOtrosSectores = `Viene de ${fromSector.toUpperCase()}`;
+
             // CRÍTICO: Agregar la fila del empleado a excelData
             excelData.push([
                 index + 1,
@@ -174,7 +208,62 @@ export async function exportExcel(
             ]);
         });
 
-        // 3. Construir e insertar la fila del Gran Total al final
+        // 3. Empleados trasladados: asistencias del período cuyo employee_id ya no está en la lista actual
+        const employeeIds = new Set(employees.map(e => String(e.id)));
+        const empIdsDni = new Set(employees.map(e => e.dni).filter(Boolean));
+
+        // Agrupar asistencias huérfanas por employee_id
+        const orphanMap = new Map<string, { first_name: string; last_name: string; dni: string; atts: typeof attendances }>();
+        attendances.forEach(a => {
+            const empId = String(a.employee_id ?? '');
+            if (!empId || employeeIds.has(empId)) return;
+            if (a.dni && empIdsDni.has(a.dni)) return; // matched by DNI
+            if (!orphanMap.has(empId)) {
+                orphanMap.set(empId, {
+                    first_name: a.first_name ?? '',
+                    last_name: a.last_name ?? '',
+                    dni: a.dni ?? 'Sin datos',
+                    atts: [],
+                });
+            }
+            orphanMap.get(empId)!.atts.push(a);
+        });
+
+        let orphanIndex = employees.length + 1;
+        orphanMap.forEach(({ first_name, last_name, dni, atts }, empId) => {
+            let totalHorasOrphan = 0;
+            const horasOrphan = dateStrings.map(dateStr => {
+                const att = atts.find(a => a.date && a.date.startsWith(dateStr));
+                if (!att) return '';
+                const rawVal = att.work_value ?? att.hours ?? '';
+                const valStr = String(rawVal).trim();
+                if (valStr === '' || valStr === 'null') return '';
+                const numericVal = parseFloat(valStr);
+                if (!isNaN(numericVal)) {
+                    totalHorasOrphan += numericVal;
+                    return numericVal;
+                }
+                return valStr;
+            });
+            granTotalHoras += totalHorasOrphan;
+            // Intentar obtener sector destino: primero desde tabla transfers, luego desde current_sector_name en asistencias
+            const toSector = transferOutMap.get(empId)
+                ?? atts.find(a => a.current_sector_name && a.current_sector_name !== params?.sectorName)?.current_sector_name
+                ?? atts[0]?.current_sector_name;
+            const notaOrphan = (toSector && toSector !== params?.sectorName)
+                ? `Se fue a ${String(toSector).toUpperCase()}`
+                : 'Se trasladó a otro sector';
+            excelData.push([
+                orphanIndex++,
+                dni,
+                `${last_name} ${first_name}`.trim(),
+                ...horasOrphan,
+                totalHorasOrphan,
+                notaOrphan,
+            ]);
+        });
+
+        // 4. Construir e insertar la fila del Gran Total al final
         const filaFinal = Array(filaCabeceras.length).fill('');
         filaFinal[2] = 'TOTAL';
         filaFinal[filaFinal.length - 1] = granTotalHoras;

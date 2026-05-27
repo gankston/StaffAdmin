@@ -14,6 +14,7 @@ export interface ApiSector {
     id: string;
     name: string;
     encargado?: string | null;   // real field from API (e.g. "SERGIO GODOY")
+    employee_count?: number | null; // count de empleados activos — viene del JOIN en /api/sectors
 }
 
 export interface SectorApiResponse {
@@ -110,7 +111,7 @@ export function toUiSector(api: ApiSector, index: number): UiSector {
         id: index + 1,
         apiId: api.id,
         name: api.name,
-        employees: 0,
+        employees: typeof api.employee_count === 'number' ? api.employee_count : 0,
         state: 'missing',
         icon: resolveIcon(api.name),
         encargado: api.encargado ?? 'Sin asignar',   // real value from API
@@ -120,13 +121,40 @@ export function toUiSector(api: ApiSector, index: number): UiSector {
 
 // ─── HTTP Client (equivalent to Ktor HttpClient with CIO engine) ───────────
 
-const API_BASE = 'https://staffaxis-api-prod.pgastonor.workers.dev';
+const API_BASE = 'https://staffaxis-new-version-production.up.railway.app';
 
-export async function fetchSectors(): Promise<UiSector[]> {
+/**
+ * Procesa `items` llamando `fn` con un máximo de `concurrency` en paralelo.
+ * Evita disparar N×2 requests simultáneos (uno por sector) que saturan D1.
+ */
+async function withConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    fn: (item: T) => Promise<R>
+): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let index = 0;
+    async function worker() {
+        while (index < items.length) {
+            const i = index++;
+            results[i] = await fn(items[i]);
+        }
+    }
+    const workers = Array.from({ length: Math.min(concurrency, items.length) }, worker);
+    await Promise.all(workers);
+    return results;
+}
+
+/**
+ * Fetch /api/sectors with a 12-second timeout.
+ * If the request fails (network error, 5xx, or timeout) it waits 2 s and
+ * retries once — this covers Turso cold-start hangs and transient 503s.
+ */
+async function fetchSectorsOnce(attempt: number): Promise<Response> {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12_000);
     try {
-        console.log('--- INICIANDO PETICIÓN DE SECTORES ---');
-
-        const response = await fetch(`${API_BASE}/api/sectors`, {
+        const res = await fetch(`${API_BASE}/api/sectors`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -135,7 +163,36 @@ export async function fetchSectors(): Promise<UiSector[]> {
                 'Pragma': 'no-cache',
                 'Expires': '0',
             },
+            signal: ctrl.signal,
         });
+        return res;
+    } catch (err) {
+        const isAbort = err instanceof Error && err.name === 'AbortError';
+        throw new Error(isAbort ? `sectors fetch timed out (attempt ${attempt})` : String(err));
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+export async function fetchSectors(adminToken = ''): Promise<UiSector[]> {
+    try {
+        console.log('--- INICIANDO PETICIÓN DE SECTORES ---');
+
+        let response: Response;
+        try {
+            response = await fetchSectorsOnce(1);
+        } catch (firstErr) {
+            console.warn(`[fetchSectors] intento 1 fallido: ${firstErr}. Reintentando en 2 s…`);
+            await new Promise(r => setTimeout(r, 2000));
+            response = await fetchSectorsOnce(2);
+        }
+
+        // Retry once more on 5xx (e.g. 503 Turso cold-start)
+        if (!response.ok && response.status >= 500) {
+            console.warn(`[fetchSectors] HTTP ${response.status} en intento 1. Reintentando en 2 s…`);
+            await new Promise(r => setTimeout(r, 2000));
+            response = await fetchSectorsOnce(2);
+        }
 
         console.log(`--- HTTP STATUS: ${response.status} ${response.statusText} ---`);
         if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -149,11 +206,16 @@ export async function fetchSectors(): Promise<UiSector[]> {
             throw new Error(`Invalid shape — "sectors" missing. Got: ${JSON.stringify(parsed).slice(0, 200)}`);
         }
 
-        // Base UiSectors with employees = 0 initially
+        // Base UiSectors — employee_count viene directo del JOIN en /api/sectors
         const baseSectors: UiSector[] = (parsed.sectors as any[])
             .filter((s: any) => s && typeof s.name === 'string')
             .map((sector: any, index: number) => toUiSector(
-                { id: String(sector.id ?? index), name: sector.name, encargado: sector.encargado ?? null },
+                {
+                    id: String(sector.id ?? index),
+                    name: sector.name,
+                    encargado: sector.encargado ?? null,
+                    employee_count: typeof sector.employee_count === 'number' ? sector.employee_count : null,
+                },
                 index
             ));
 
@@ -168,58 +230,44 @@ export async function fetchSectors(): Promise<UiSector[]> {
         // "mañana UTC" y el server le responda con sectores vacíos.
         const today = todayInAppTz();
 
-        const enriched = await Promise.all(
-            baseSectors.map(async (sector) => {
-                let count = 0;
+        // Enriquecimiento: solo fetch de asistencias de HOY para determinar estado sent/missing.
+        // El employee_count ya viene embebido en la respuesta de /api/sectors (JOIN en DB).
+        // Antes: 2 requests por sector (employees + attendances) → N×2 simultáneos → timeout en cascada.
+        // Ahora: 1 request por sector (solo attendances) → N simultáneos con concurrencia controlada.
+        const enriched = await withConcurrency(baseSectors, 5, async (sector) => {
                 let hasAttendancesToday = false;
 
                 try {
                     const ctrl = new AbortController();
-                    const timeout = setTimeout(() => ctrl.abort(), 8000); // 8s per sector
-                    const [empRes, attRes] = await Promise.all([
-                        fetch(
-                            `${API_BASE}/api/employees?sector_id=${encodeURIComponent(sector.apiId)}`,
-                            { headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }, signal: ctrl.signal }
-                        ),
-                        fetch(
-                            `${API_BASE}/api/attendances?sector_id=${encodeURIComponent(sector.apiId)}&start_date=${today}&end_date=${today}`,
-                            { headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }, signal: ctrl.signal }
-                        )
-                    ]);
+                    const timeout = setTimeout(() => ctrl.abort(), 8000);
+                    const attRes = await fetch(
+                        `${API_BASE}/api/admin/report?sector_id=${encodeURIComponent(sector.apiId)}&start_date=${today}&end_date=${today}`,
+                        {
+                            headers: {
+                                'Cache-Control': 'no-cache',
+                                'Pragma': 'no-cache',
+                                'X-Admin-Token': adminToken,
+                            },
+                            signal: ctrl.signal,
+                        }
+                    );
                     clearTimeout(timeout);
 
-                    let empList: ApiEmployee[] = [];
-                    if (empRes.ok) {
-                        const empData: any = await empRes.json();
-                        if (Array.isArray(empData.employees)) {
-                            count = empData.employees.length;
-                            empList = empData.employees;
-                        }
-                    }
-
-                    let attsToday: ApiAttendance[] = [];
                     if (attRes.ok) {
                         const attData: any = await attRes.json();
-                        if (Array.isArray(attData.attendances)) {
-                            // Filtramos solo las que matchean exactamente HOY
-                            // (la API a veces devuelve registros adyacentes por timezone).
-                            attsToday = attData.attendances.filter((a: any) => a.date && a.date.startsWith(today));
-                            hasAttendancesToday = attsToday.length > 0;
+                        if (Array.isArray(attData.rows)) {
+                            hasAttendancesToday = attData.rows.some((a: any) => a.date && a.date.startsWith(today));
                         }
                     }
 
                     return {
                         ...sector,
-                        employees: count,
-                        employeesList: empList,
-                        attendancesToday: attsToday,
                         state: hasAttendancesToday ? 'sent' : 'missing' as 'sent' | 'missing'
                     };
                 } catch {
-                    return sector; // safe fallback if network error
+                    return sector;
                 }
-            })
-        );
+        });
 
         console.log(`--- SECTORES ENRIQUECIDOS: ${enriched.length} (con conteos de empleados) ---`);
         return enriched;
@@ -235,16 +283,17 @@ export async function fetchSectors(): Promise<UiSector[]> {
 // Calls GET /api/employees?sector_id={sectorId}
 // Returns empty array if endpoint not yet available (404) to avoid crashes.
 
-export async function fetchEmployees(sectorId: string): Promise<ApiEmployee[]> {
+export async function fetchEmployees(sectorId: string, adminToken = ''): Promise<ApiEmployee[]> {
     try {
         console.log(`--- CARGANDO EMPLEADOS PARA: ${sectorId} ---`);
 
-        const response = await fetch(`${API_BASE}/api/employees?sector_id=${encodeURIComponent(sectorId)}`, {
+        const response = await fetch(`${API_BASE}/api/admin/employees?sector_id=${encodeURIComponent(sectorId)}`, {
             method: 'GET',
             headers: {
                 'Accept': 'application/json',
                 'Cache-Control': 'no-cache, no-store, must-revalidate',
                 'Pragma': 'no-cache',
+                'X-Admin-Token': adminToken,
             },
         });
 
@@ -289,6 +338,40 @@ export async function fetchEmployees(sectorId: string): Promise<ApiEmployee[]> {
     }
 }
 
+// ─── fetchTransfers ───────────────────────────────────────────────────────────
+// GET /api/admin/transfers?sector_id=X&start_date=Y&end_date=Z
+
+export interface ApiTransfer {
+    employee_id: string;
+    from_sector_id: string | null;
+    to_sector_id: string;
+    from_sector_name: string | null;
+    to_sector_name: string;
+    first_name: string;
+    last_name: string;
+    dni: string | null;
+    transferred_at: string;
+}
+
+export async function fetchTransfers(
+    sectorId: string,
+    startDate: string,
+    endDate: string,
+    adminToken = ''
+): Promise<ApiTransfer[]> {
+    try {
+        const url = `${API_BASE}/api/admin/transfers?sector_id=${encodeURIComponent(sectorId)}&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
+        const res = await fetch(url, {
+            headers: { 'X-Admin-Token': adminToken, 'Accept': 'application/json' }
+        });
+        if (!res.ok) return [];
+        const data: any = await res.json();
+        return Array.isArray(data.transfers) ? data.transfers : [];
+    } catch {
+        return [];
+    }
+}
+
 // ─── fetchAttendances ─────────────────────────────────────────────────────────
 // GET /api/attendances?sector_id={sectorId}&start_date={YYYY-MM-DD}&end_date={YYYY-MM-DD}
 
@@ -299,17 +382,16 @@ export async function fetchAttendances(
     adminToken?: string  // optional admin token for authorization
 ): Promise<ApiAttendance[]> {
     try {
-        const url = `${API_BASE}/api/attendances?sector_id=${encodeURIComponent(sectorId)}&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
+        const token = adminToken || '';
+        const url = `${API_BASE}/api/admin/report?sector_id=${encodeURIComponent(sectorId)}&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
         console.log(`[fetchAttendances] GET ${url}`);
 
         const headers: Record<string, string> = {
             'Accept': 'application/json',
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Pragma': 'no-cache',
+            'X-Admin-Token': token,
         };
-        if (adminToken) {
-            headers['Authorization'] = `Bearer ${adminToken}`;
-        }
 
         const response = await fetch(url, {
             method: 'GET',
@@ -322,7 +404,41 @@ export async function fetchAttendances(
         }
 
         const data: any = await response.json();
-        const attendances: ApiAttendance[] = Array.isArray(data.attendances) ? data.attendances : [];
+        // /api/admin/report devuelve {rows:[]} — mapeamos a forma ApiAttendance
+        const attendances: ApiAttendance[] = Array.isArray(data.rows)
+            ? data.rows.map((r: any) => {
+                const raw = r.minutes_worked;
+                const num = raw != null ? Number(raw) : NaN;
+                // Old migrated data: stored as hours (8, 12, etc. < 60)
+                // New submissions: stored as minutes (480, 720, etc. >= 60)
+                // Non-numeric values (e.g. "C", "$36400"): pass through as-is
+                let hoursVal: string | null;
+                let hoursNum: number | null;
+                if (!isNaN(num) && num > 0) {
+                    const h = num < 60 ? num : num / 60;
+                    hoursVal = String(h);
+                    hoursNum = h;
+                } else {
+                    hoursVal = raw ?? null;
+                    hoursNum = null;
+                }
+                return {
+                    id: r.submission_id,
+                    employee_id: r.employee_id ?? '',
+                    sector_id: sectorId,
+                    current_sector_id: r.current_sector_id ?? null,
+                    current_sector_name: r.current_sector_name ?? null,
+                    date: r.date,
+                    minutes_worked: raw,
+                    work_value: hoursVal,
+                    hours: hoursNum,
+                    first_name: r.first_name,
+                    last_name: r.last_name,
+                    dni: r.dni,
+                    notes: r.notes,
+                };
+              })
+            : [];
 
         console.log(`[fetchAttendances] ${attendances.length} asistencias para ${sectorId} (${startDate} → ${endDate})`);
         return attendances;

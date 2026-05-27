@@ -9,3 +9,5 @@ local_err*.txt
 tsc_out.txt
 ts_errors.txt
 StaffAdmin.zip
+.env.local
+.env*.local

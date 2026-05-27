@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect } from "react";
 
 
 import {
@@ -253,8 +253,8 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
       let absences: any[] = [];
       try {
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
-        const absUrl = `https://staffaxis-api-prod.pgastonor.workers.dev/api/absences?sector_id=${encodeURIComponent(sector.apiId)}&start_date=${startDate}&end_date=${endDate}`;
+        if (adminToken) headers['X-Admin-Token'] = adminToken;
+        const absUrl = `https://staffaxis-new-version-production.up.railway.app/api/admin/absences?sector_id=${encodeURIComponent(sector.apiId)}&start_date=${startDate}&end_date=${endDate}`;
         const absRes = await fetch(absUrl, { headers });
         if (absRes.ok) {
           const absData = await absRes.json();
@@ -265,15 +265,33 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
         console.warn('[Export] No se pudieron cargar ausencias:', absErr);
       }
 
-      console.log(`[Export] Datos para excel: ${employees.length} empleados, ${attendances.length} asistencias, ${absences.length} ausencias`);
+      // 3b. Fetch traslados del período
+      let transfers: any[] = [];
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (adminToken) headers['X-Admin-Token'] = adminToken;
+        const trUrl = `https://staffaxis-new-version-production.up.railway.app/api/admin/transfers?sector_id=${encodeURIComponent(sector.apiId)}&start_date=${startDate}&end_date=${endDate}`;
+        const trRes = await fetch(trUrl, { headers });
+        if (trRes.ok) {
+          const trData = await trRes.json();
+          transfers = trData.transfers ?? [];
+          console.log(`[Export] Traslados del período: ${transfers.length}`);
+        }
+      } catch (trErr) {
+        console.warn('[Export] No se pudieron cargar traslados:', trErr);
+      }
 
-      // 4. Generar Excel con asistencias + ausencias
+      console.log(`[Export] Datos para excel: ${employees.length} empleados, ${attendances.length} asistencias, ${absences.length} ausencias, ${transfers.length} traslados`);
+
+      // 4. Generar Excel con asistencias + ausencias + traslados
       const result = await window.electronAPI.exportExcel({
         sectorName: sector.name,
+        sectorId: sector.apiId,
         encargado: sector.encargado,
         employees: employees,
         attendances: attendances,
-        absences: absences,          // ← nuevo: ausencias del período
+        absences: absences,
+        transfers: transfers,
         periodMonth,
         periodYear,
       });
@@ -322,9 +340,11 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     setAbsentEmployeeIds(new Set());
     
     if (window.electronAPI?.getEmployees) {
-      window.electronAPI.getEmployees(sector.apiId)
+      const rawTok = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+      const tok = rawTok === "undefined" ? "" : rawTok;
+      window.electronAPI.getEmployees(sector.apiId, tok)
         .then((empData: any) => {
-          console.log('Cargando datos del sector:', sector.apiId);
+          console.log('Cargando datos del sector:', sector.apiId, 'empleados:', empData?.length);
           setEmployees(empData);
         })
         .catch((err: unknown) => console.error('[FloatingModal] fetch failed:', err))
@@ -340,9 +360,9 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
         const rawToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
         const token = rawToken === "undefined" ? "" : rawToken;
         const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (token) headers["Authorization"] = `Bearer ${token}`;
+        if (token) headers["X-Admin-Token"] = token;
 
-        const url = `https://staffaxis-api-prod.pgastonor.workers.dev/api/absences?sector_id=${encodeURIComponent(sector.apiId)}&start_date=${todayStr}&end_date=${todayStr}`;
+        const url = `https://staffaxis-new-version-production.up.railway.app/api/admin/absences?sector_id=${encodeURIComponent(sector.apiId)}&start_date=${todayStr}&end_date=${todayStr}`;
         const res = await fetch(url, { headers });
         if (res.ok) {
           const data = await res.json();
@@ -485,7 +505,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
             </div>
           ) : (
             <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
-              {employees.filter(emp => `${emp.first_name || ''} ${emp.last_name || ''} ${emp.dni || ''}`.toLowerCase().includes(localSearch.toLowerCase())).map((emp) => {
+              {employees.filter(emp => emp.is_active && `${emp.first_name || ''} ${emp.last_name || ''} ${emp.dni || ''}`.toLowerCase().includes(localSearch.toLowerCase())).map((emp) => {
                 const isAbsent = absentEmployeeIds.has(emp.id);
                 return (
                   <div
@@ -900,7 +920,9 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
     }
     setEmpLoading(true);
     setEmployees([]);
-    window.electronAPI?.getEmployees(view.apiSector.apiId)
+    const rawTok2 = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+    const tok2 = rawTok2 === "undefined" ? "" : rawTok2;
+    window.electronAPI?.getEmployees(view.apiSector.apiId, tok2)
       .then((data: any[]) => setEmployees(data))
       .catch((e: unknown) => console.error('[Informes] fetch employees:', e))
       .finally(() => setEmpLoading(false));
@@ -1105,14 +1127,30 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [globalStats, setGlobalStats] = useState({ ausentes: 0, horasTotales: 0 });
 
-  // Global Employee Search derived state
-  const employeeSearchResults = useMemo(() => {
-    if (searchQuery.length < 2) return [];
-    const q = searchQuery.toLowerCase();
-    return sectors.flatMap(s => (s.employeesList || [])
-      .filter(e => `${e.first_name || ''} ${e.last_name || ''} ${e.dni || ''}`.toLowerCase().includes(q))
-      .map(e => ({ emp: e, sector: s }))
-    ).slice(0, 15);
+  // Global Employee Search — llama al endpoint /api/admin/employees/search
+  const [employeeSearchResults, setEmployeeSearchResults] = useState<{ emp: Employee; sector: Sector }[]>([]);
+
+  useEffect(() => {
+    if (searchQuery.length < 2) { setEmployeeSearchResults([]); return; }
+    const rawToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+    const token = rawToken === "undefined" ? "" : rawToken;
+    let cancelled = false;
+    fetch(
+      `https://staffaxis-new-version-production.up.railway.app/api/admin/employees/search?q=${encodeURIComponent(searchQuery)}`,
+      { headers: token ? { "X-Admin-Token": token } : {} }
+    )
+      .then(res => res.json())
+      .then(data => {
+        if (cancelled) return;
+        const results: { emp: Employee; sector: Sector }[] = (data.employees ?? []).flatMap((e: any) => {
+          const sector = sectors.find(s => s.apiId === e.sector_id);
+          if (!sector) return [];
+          return [{ emp: e as Employee, sector }];
+        }).slice(0, 15);
+        setEmployeeSearchResults(results);
+      })
+      .catch(() => { if (!cancelled) setEmployeeSearchResults([]); });
+    return () => { cancelled = true; };
   }, [searchQuery, sectors]);
 
   // States for Authentication (Login / Logout)
@@ -1162,11 +1200,11 @@ export default function App() {
     } catch { }
     return null;
   };
-  const isAdmin = ['admin', 'mabel.salvita'].includes(getAdminUsername() || '');
+  const isAdmin = isLoggedIn;
 
   useEffect(() => {
     // Fetch real notifications from the backend API
-    fetch('https://staffaxis-api-prod.pgastonor.workers.dev/api/notifications')
+    fetch('https://staffaxis-new-version-production.up.railway.app/api/notifications')
       .then(res => res.json())
       .then(data => {
         if (data.notifications && data.notifications.length > 0) {
@@ -1228,10 +1266,28 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Only verify if a token exists to auto-login on startup. No expiration intervals.
-    const token = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token");
+    const rawToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token");
+    const token = rawToken === "undefined" ? "" : rawToken;
     if (token && !isLoggedIn) {
-      setIsLoggedIn(true);
+      // Validate stored token against API before auto-login
+      fetch("https://staffaxis-new-version-production.up.railway.app/api/admin/sectors", {
+        headers: { 'X-Admin-Token': token }
+      }).then(res => {
+        if (res.ok) {
+          window.electronAPI?.setAdminToken?.(token);
+          setIsLoggedIn(true);
+        } else {
+          // Stale/invalid token — force re-login
+          localStorage.removeItem("admin_token");
+          localStorage.removeItem("admin_user");
+          sessionStorage.removeItem("admin_token");
+          sessionStorage.removeItem("admin_user");
+        }
+      }).catch(() => {
+        // Network error — allow login with stored token (offline tolerance)
+        window.electronAPI?.setAdminToken?.(token);
+        setIsLoggedIn(true);
+      });
     } else if (!token && isLoggedIn) {
       handleLogout();
     }
@@ -1245,10 +1301,10 @@ export default function App() {
     setLoginErrorMsg("");
 
     try {
-      const response = await fetch("https://staffaxis-api-prod.pgastonor.workers.dev/api/auth/login", {
+      const response = await fetch("https://staffaxis-new-version-production.up.railway.app/api/admin/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ password })
       });
       const data = await response.json();
       console.log("Respuesta de API Login:", data);
@@ -1257,13 +1313,37 @@ export default function App() {
         const storage = keepLoggedIn ? localStorage : sessionStorage;
         storage.setItem("admin_token", data.token);
         storage.setItem("admin_user", JSON.stringify(data.user));
+        window.electronAPI?.setAdminToken?.(data.token);
         setIsLoggedIn(true);
       } else {
         setLoginError(true);
-        setLoginErrorMsg("Usuario o contraseña incorrectos");
+        setLoginErrorMsg("Contraseña incorrecta");
       }
     } catch (err) {
       console.error("Error al intentar iniciar sesión:", err);
+      setLoginError(true);
+      setLoginErrorMsg("Error de conexión");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const attemptGoogleLogin = async () => {
+    setIsLoggingIn(true);
+    setLoginError(false);
+    setLoginErrorMsg("");
+    try {
+      const result: any = await window.electronAPI?.googleLogin?.();
+      if (result?.success && result.token) {
+        localStorage.setItem("admin_token", result.token);
+        localStorage.setItem("admin_user", JSON.stringify(result.user));
+        window.electronAPI?.setAdminToken?.(result.token);
+        setIsLoggedIn(true);
+      } else {
+        setLoginError(true);
+        setLoginErrorMsg(result?.error || "Error al autenticar con Google");
+      }
+    } catch (err) {
       setLoginError(true);
       setLoginErrorMsg("Error de conexión");
     } finally {
@@ -1282,15 +1362,7 @@ export default function App() {
     const rawToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
     const token = rawToken === "undefined" ? "" : rawToken;
     if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    } else {
-      const userStr = localStorage.getItem("admin_user") || sessionStorage.getItem("admin_user");
-      if (userStr) {
-        try {
-          const userObj = JSON.parse(userStr);
-          if (userObj?.username) headers["X-User-Role"] = userObj.username;
-        } catch (e) {}
-      }
+      headers["X-Admin-Token"] = token;
     }
     return headers;
   };
@@ -1326,28 +1398,36 @@ export default function App() {
       
       console.log("[Stats] Fetching for date:", todayStr);
 
-      const resAbs = await fetch(`https://staffaxis-api-prod.pgastonor.workers.dev/api/absences?start_date=${todayStr}&end_date=${todayStr}`, { headers });
+      // Ausentes de hoy: buscar en primer sector disponible como proxy global
       let ausentesCount = 0;
-      if (resAbs.ok) {
-         const d = await resAbs.json();
-         ausentesCount = d.absences ? d.absences.length : 0;
-         console.log("[Stats] Ausentes found:", ausentesCount);
+      if (sectors && sectors.length > 0) {
+        try {
+          const resAbs = await fetch(
+            `https://staffaxis-new-version-production.up.railway.app/api/admin/absences?sector_id=${encodeURIComponent(sectors[0].apiId)}&start_date=${todayStr}&end_date=${todayStr}`,
+            { headers }
+          );
+          if (resAbs.ok) {
+            const d = await resAbs.json();
+            ausentesCount = d.absences ? d.absences.length : 0;
+          }
+        } catch (e) { console.error("[Stats] Error ausentes:", e); }
       }
+      console.log("[Stats] Ausentes found:", ausentesCount);
 
       let totalH = 0;
       if (sectors && sectors.length > 0) {
           const hoursArray = await Promise.all(sectors.map(async (sec) => {
               let sectorH = 0;
-              const url = `https://staffaxis-api-prod.pgastonor.workers.dev/api/attendances?sector_id=${encodeURIComponent(sec.apiId)}&start_date=${todayStr}&end_date=${todayStr}`;
+              const url = `https://staffaxis-new-version-production.up.railway.app/api/admin/report?sector_id=${encodeURIComponent(sec.apiId)}&start_date=${todayStr}&end_date=${todayStr}`;
               try {
                   const res = await fetch(url, { headers });
                   if (res.ok) {
                       const data = await res.json();
-                      if (data.attendances && Array.isArray(data.attendances)) {
-                          for (const att of data.attendances) {
+                      if (data.rows && Array.isArray(data.rows)) {
+                          for (const att of data.rows) {
                                if (att.date === todayStr) {
-                                   const val = String(att.work_value || att.minutes_worked || "");
-                                   if (val && !val.startsWith("$") && val.toUpperCase() !== "C" && val !== "null") {
+                                   const val = String(att.minutes_worked || "");
+                                   if (val && val !== "null") {
                                        const num = Number(val);
                                        if (!isNaN(num) && num > 0) sectorH += (num / 60);
                                    }
@@ -1387,7 +1467,7 @@ export default function App() {
     console.log("Enviando headers para Crear Admin:", headers);
 
     try {
-      const res = await fetch("https://staffaxis-api-prod.pgastonor.workers.dev/api/admin-users", {
+      const res = await fetch("https://staffaxis-new-version-production.up.railway.app/api/admin-users", {
         method: "POST", headers,
         body: JSON.stringify({ username: newAdminUser, password: newAdminPass })
       });
@@ -1408,7 +1488,7 @@ export default function App() {
     console.log("Enviando headers para Crear Sector:", headers);
 
     try {
-      const res = await fetch("https://staffaxis-api-prod.pgastonor.workers.dev/api/sectors", {
+      const res = await fetch("https://staffaxis-new-version-production.up.railway.app/api/admin/sectors", {
         method: "POST", headers,
         body: JSON.stringify({ name: newSectorName, encargado: newSectorEncargado })
       });
@@ -1429,7 +1509,7 @@ export default function App() {
     console.log("Enviando headers para Crear Empleado:", headers);
 
     try {
-      const res = await fetch("https://staffaxis-api-prod.pgastonor.workers.dev/api/employees", {
+      const res = await fetch("https://staffaxis-new-version-production.up.railway.app/api/admin/employees", {
         method: "POST", headers,
         body: JSON.stringify({ first_name: newEmployeeFirst, last_name: newEmployeeLast, dni: newEmployeeDNI, sector_id: showCreateEmployeeModal?.apiId })
       });
@@ -1445,8 +1525,9 @@ export default function App() {
   const handleDeleteEmployee = async (id: string) => {
     const headers = getHeaders();
     try {
-      const res = await fetch(`https://staffaxis-api-prod.pgastonor.workers.dev/api/employees/${id}`, {
-        method: "DELETE", headers
+      const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin/employees/${id}`, {
+        method: "PUT", headers,
+        body: JSON.stringify({ is_active: false })
       });
       if (!res.ok) {
         const d = await res.json();
@@ -1463,7 +1544,7 @@ export default function App() {
   const handleDeleteSector = async (id: string) => {
     const headers = getHeaders();
     try {
-      const res = await fetch(`https://staffaxis-api-prod.pgastonor.workers.dev/api/sectors/${id}`, {
+      const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin/sectors/${id}`, {
         method: "DELETE", headers
       });
       if (res.ok) {
@@ -1483,7 +1564,7 @@ export default function App() {
   const handleFetchAdmins = async () => {
     setLoadingAdmins(true);
     try {
-      const res = await fetch("https://staffaxis-api-prod.pgastonor.workers.dev/api/admin-users", {
+      const res = await fetch("https://staffaxis-new-version-production.up.railway.app/api/admin-users", {
         headers: getHeaders()
       });
       if (res.ok) {
@@ -1498,7 +1579,7 @@ export default function App() {
     if (!editingAdmin || !editAdminUser) return;
     setLoadingAdmins(true);
     try {
-      const res = await fetch(`https://staffaxis-api-prod.pgastonor.workers.dev/api/admin-users/${editingAdmin.id}`, {
+      const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin-users/${editingAdmin.id}`, {
         method: "PUT",
         headers: getHeaders(),
         body: JSON.stringify({ username: editAdminUser, password: editAdminPass })
@@ -1517,7 +1598,7 @@ export default function App() {
     // Handled by custom confirm modal
     setLoadingAdmins(true);
     try {
-      const res = await fetch(`https://staffaxis-api-prod.pgastonor.workers.dev/api/admin-users/${id}`, {
+      const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin-users/${id}`, {
         method: "DELETE",
         headers: getHeaders()
       });
@@ -1681,7 +1762,7 @@ export default function App() {
                         <UserCog size={14} /> Gestionar Usuarios
                       </button>
                       <button
-                        onClick={() => { setShowSettingsMenu(false); alert("StaffAdmin - Panel de Control\nVersión: 1.0.9"); }}
+                        onClick={() => { setShowSettingsMenu(false); alert("StaffAdmin - Panel de Control\nVersión: 1.4.0"); }}
                         className="w-full text-left px-5 py-3 text-white transition-colors hover:bg-white/10 flex items-center gap-2"
                         style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none" }}
                       >
@@ -1921,51 +2002,65 @@ export default function App() {
       {
         !isLoggedIn && (
           <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
-            <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
-              <h2 className="text-white mb-6 text-center" style={{ fontSize: 24, fontWeight: 800 }}>Iniciar Sesión</h2>
-
-              <input
-                type="text"
-                placeholder="Usuario"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                onKeyDown={handleLoginKeyDown}
-                className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none"
-                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 15 }}
-              />
-
-              <input
-                type="password"
-                placeholder="Contraseña"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={handleLoginKeyDown}
-                className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none"
-                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 15 }}
-              />
-
-              <div className="flex items-center gap-3 mb-6">
-                <input
-                  type="checkbox"
-                  checked={keepLoggedIn}
-                  onChange={(e) => setKeepLoggedIn(e.target.checked)}
-                  style={{ width: 16, height: 16, cursor: "pointer", accentColor: "#9C27B0" }}
-                />
-                <span className="text-white/70" style={{ fontSize: 14 }}>Mantener sesión iniciada</span>
+            <div className="rounded-3xl p-8 flex flex-col items-center relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
+              {/* Logo / ícono */}
+              <div className="flex items-center justify-center rounded-2xl mb-5" style={{ width: 64, height: 64, background: "linear-gradient(135deg, #9C27B0, #26C6DA)", boxShadow: "0 8px 24px rgba(156,39,176,0.4)" }}>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <circle cx="9" cy="7" r="4" stroke="#fff" strokeWidth="2"/>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
               </div>
 
+              <h2 className="text-white mb-2 text-center" style={{ fontSize: 22, fontWeight: 800 }}>StaffAdmin</h2>
+              <p className="text-center mb-8" style={{ color: "rgba(255,255,255,0.45)", fontSize: 13 }}>Iniciá sesión con tu cuenta de Google para continuar</p>
+
               {loginError && (
-                <p className="mb-4 text-center" style={{ color: "#FF5252", fontSize: 13, fontWeight: 600 }}>{loginErrorMsg || "Usuario o contraseña incorrectos"}</p>
+                <p className="mb-5 text-center px-4 py-3 rounded-xl w-full" style={{ color: "#FF5252", fontSize: 13, fontWeight: 600, background: "rgba(255,82,82,0.1)", border: "1px solid rgba(255,82,82,0.2)" }}>
+                  {loginErrorMsg || "Error al autenticar con Google"}
+                </p>
               )}
 
               <button
-                onClick={attemptLogin}
+                onClick={attemptGoogleLogin}
                 disabled={isLoggingIn}
-                className="w-full py-3.5 rounded-xl transition-all hover:opacity-90 active:scale-[0.98] mt-2"
-                style={{ background: isLoggingIn ? "#666" : "linear-gradient(135deg, #9C27B0, #26C6DA)", border: "none", cursor: isLoggingIn ? "not-allowed" : "pointer", boxShadow: isLoggingIn ? "none" : "0 6px 22px rgba(156,39,176,0.35)", color: "#fff", fontSize: 15, fontWeight: 700 }}
+                className="w-full py-3.5 rounded-xl transition-all active:scale-[0.98] flex items-center justify-center gap-3"
+                style={{
+                  background: isLoggingIn ? "rgba(255,255,255,0.08)" : "#fff",
+                  border: "none",
+                  cursor: isLoggingIn ? "not-allowed" : "pointer",
+                  boxShadow: isLoggingIn ? "none" : "0 4px 16px rgba(0,0,0,0.3)",
+                  color: isLoggingIn ? "rgba(255,255,255,0.4)" : "#3c4043",
+                  fontSize: 15,
+                  fontWeight: 600,
+                  opacity: isLoggingIn ? 0.7 : 1,
+                }}
               >
-                {isLoggingIn ? "Cargando..." : "Ingresar"}
+                {isLoggingIn ? (
+                  <>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ animation: "spin 1s linear infinite" }}>
+                      <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.2)" strokeWidth="3"/>
+                      <path d="M12 2a10 10 0 0 1 10 10" stroke="rgba(255,255,255,0.7)" strokeWidth="3" strokeLinecap="round"/>
+                    </svg>
+                    <span style={{ color: "rgba(255,255,255,0.6)" }}>Autenticando...</span>
+                  </>
+                ) : (
+                  <>
+                    {/* Google G logo */}
+                    <svg width="20" height="20" viewBox="0 0 48 48">
+                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+                      <path fill="none" d="M0 0h48v48H0z"/>
+                    </svg>
+                    Iniciar sesión con Google
+                  </>
+                )}
               </button>
+
+              <style dangerouslySetInnerHTML={{ __html: `@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }` }} />
             </div>
           </div>
         )
