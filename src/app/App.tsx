@@ -38,7 +38,8 @@ import {
   Factory,
   Tractor,
   HardHat,
-  FileText
+  FileText,
+  Pencil
 } from "lucide-react";
 
 
@@ -205,7 +206,7 @@ interface Employee {
 }
 
 
-function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, onDeleteEmployee, onDeleteSector, setShowConfirmDelete }: { sector: Sector; onClose: () => void; onExport: () => void; isAdmin: boolean; onCreateEmployee?: () => void; onDeleteEmployee?: (id: string) => Promise<boolean>; onDeleteSector?: (id: string) => Promise<boolean>; setShowConfirmDelete: (val: any) => void }) {
+function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, onDeleteEmployee, onEditEmployee, onDeleteSector, setShowConfirmDelete }: { sector: Sector; onClose: () => void; onExport: () => void; isAdmin: boolean; onCreateEmployee?: () => void; onDeleteEmployee?: (id: string) => Promise<boolean>; onEditEmployee?: (id: string, data: { first_name: string; last_name: string; dni: string }) => Promise<boolean>; onDeleteSector?: (id: string) => Promise<boolean>; setShowConfirmDelete: (val: any) => void }) {
   const [showTooltip, setShowTooltip] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [empLoading, setEmpLoading] = useState(true);
@@ -213,6 +214,13 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
   const [absentEmployeeIds, setAbsentEmployeeIds] = useState<Set<string>>(new Set());
   const [absenceLoading, setAbsenceLoading] = useState(false);
   const [localSearch, setLocalSearch] = useState("");
+
+  // ── Edit employee state ───────────────────────────────────────────────────
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [editFirst, setEditFirst] = useState("");
+  const [editLast, setEditLast] = useState("");
+  const [editDni, setEditDni] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
   const isMissing = sector.state === "missing";
 
   // Fecha de hoy en formato YYYY-MM-DD
@@ -556,6 +564,21 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
                           </span>
                         )
                       )}
+                      {isAdmin && onEditEmployee && (
+                        <button
+                          onClick={() => {
+                            setEditingEmployee(emp);
+                            setEditFirst(emp.first_name);
+                            setEditLast(emp.last_name);
+                            setEditDni(emp.dni ?? "");
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-purple-500/20 transition-colors"
+                          style={{ cursor: "pointer", color: "#C86FE8" }}
+                          title="Editar empleado"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      )}
                       {isAdmin && onDeleteEmployee && (
                         <button
                           onClick={() => {
@@ -675,6 +698,104 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
           </div>
         </div>
       </div>
+
+      {/* ── Edit employee dialog ──────────────────────────────────────── */}
+      {editingEmployee && (
+        <div
+          className="absolute inset-0 z-50 flex items-center justify-center rounded-3xl"
+          style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setEditingEmployee(null); }}
+        >
+          <div
+            className="flex flex-col gap-4 rounded-2xl p-6 w-80"
+            style={{ background: "#1E1E2E", border: "1px solid rgba(156,39,176,0.3)", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Pencil size={16} color="#C86FE8" />
+                <p style={{ fontSize: 14, fontWeight: 700, color: "white" }}>Editar empleado</p>
+              </div>
+              <button onClick={() => setEditingEmployee(null)} className="p-1 rounded-lg hover:bg-white/10 transition-colors" style={{ color: "rgba(255,255,255,0.4)" }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Fields */}
+            <div className="flex flex-col gap-3">
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Nombre</label>
+                <input
+                  value={editFirst}
+                  onChange={(e) => setEditFirst(e.target.value)}
+                  placeholder="Nombre"
+                  className="w-full mt-1 px-3 py-2 rounded-xl text-white outline-none"
+                  style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 13 }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Apellido</label>
+                <input
+                  value={editLast}
+                  onChange={(e) => setEditLast(e.target.value)}
+                  placeholder="Apellido"
+                  className="w-full mt-1 px-3 py-2 rounded-xl text-white outline-none"
+                  style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 13 }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>DNI</label>
+                <input
+                  value={editDni}
+                  onChange={(e) => setEditDni(e.target.value)}
+                  placeholder="DNI (opcional)"
+                  inputMode="numeric"
+                  className="w-full mt-1 px-3 py-2 rounded-xl text-white outline-none"
+                  style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 13 }}
+                />
+              </div>
+            </div>
+
+            {/* Buttons */}
+            <div className="flex gap-2 mt-1">
+              <button
+                onClick={() => setEditingEmployee(null)}
+                disabled={editSaving}
+                className="flex-1 py-2.5 rounded-xl font-semibold transition-all hover:bg-white/10"
+                style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
+              >
+                Cancelar
+              </button>
+              <button
+                disabled={editSaving || !editFirst.trim()}
+                onClick={async () => {
+                  if (!onEditEmployee) return;
+                  setEditSaving(true);
+                  const ok = await onEditEmployee(editingEmployee.id, {
+                    first_name: editFirst.trim(),
+                    last_name: editLast.trim(),
+                    dni: editDni.trim(),
+                  });
+                  setEditSaving(false);
+                  if (ok) {
+                    setEmployees(prev => prev.map(e =>
+                      e.id === editingEmployee.id
+                        ? { ...e, first_name: editFirst.trim(), last_name: editLast.trim(), dni: editDni.trim() || null }
+                        : e
+                    ));
+                    setEditingEmployee(null);
+                  }
+                }}
+                className="flex-1 py-2.5 rounded-xl font-bold transition-all hover:opacity-90 active:scale-[0.98]"
+                style={{ fontSize: 13, color: "white", background: "linear-gradient(135deg, #9C27B0, #6A1B9A)", border: "none", cursor: editSaving || !editFirst.trim() ? "not-allowed" : "pointer", opacity: editSaving || !editFirst.trim() ? 0.5 : 1 }}
+              >
+                {editSaving ? "Guardando…" : "Guardar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1526,8 +1647,7 @@ export default function App() {
     const headers = getHeaders();
     try {
       const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin/employees/${id}`, {
-        method: "PUT", headers,
-        body: JSON.stringify({ is_active: false })
+        method: "DELETE", headers
       });
       if (!res.ok) {
         const d = await res.json();
@@ -1535,8 +1655,32 @@ export default function App() {
         return false;
       }
       return true;
-    } catch (e) { 
-      alert("Error de conexión"); 
+    } catch (e) {
+      alert("Error de conexión");
+      return false;
+    }
+  };
+
+  const handleEditEmployee = async (id: string, data: { first_name: string; last_name: string; dni: string }) => {
+    const headers = getHeaders();
+    try {
+      const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin/employees/${id}`, {
+        method: "PUT",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          first_name: data.first_name,
+          last_name: data.last_name,
+          dni: data.dni || null,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        alert(d.error || "Error al guardar empleado");
+        return false;
+      }
+      return true;
+    } catch (e) {
+      alert("Error de conexión");
       return false;
     }
   };
@@ -1762,7 +1906,7 @@ export default function App() {
                         <UserCog size={14} /> Gestionar Usuarios
                       </button>
                       <button
-                        onClick={() => { setShowSettingsMenu(false); alert("StaffAdmin - Panel de Control\nVersión: 1.4.0"); }}
+                        onClick={() => { setShowSettingsMenu(false); alert("StaffAdmin - Panel de Control\nVersión: 1.5.0"); }}
                         className="w-full text-left px-5 py-3 text-white transition-colors hover:bg-white/10 flex items-center gap-2"
                         style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none" }}
                       >
@@ -1929,6 +2073,7 @@ export default function App() {
                 setShowCreateEmployeeModal(selectedSector!);
               }}
               onDeleteEmployee={handleDeleteEmployee}
+              onEditEmployee={handleEditEmployee}
               onDeleteSector={handleDeleteSector}
               setShowConfirmDelete={setShowConfirmDelete}
             />
@@ -1940,7 +2085,7 @@ export default function App() {
       {
         showExportModal && (
           <div
-            className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all"
+            className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all"
             style={{ background: "rgba(0,0,0,0.6)" }}
             onClick={() => setShowExportModal(false)}
           >
@@ -2001,7 +2146,7 @@ export default function App() {
       {/* Login Modal Overlay */}
       {
         !isLoggedIn && (
-          <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
             <div className="rounded-3xl p-8 flex flex-col items-center relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
               {/* Logo / ícono */}
               <div className="flex items-center justify-center rounded-2xl mb-5" style={{ width: 64, height: 64, background: "linear-gradient(135deg, #9C27B0, #26C6DA)", boxShadow: "0 8px 24px rgba(156,39,176,0.4)" }}>
@@ -2068,7 +2213,7 @@ export default function App() {
 
       {/* Creation Modals (Admin privileges only) */}
       {showCreateAdminModal && isAdmin && (
-        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
           <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
             <button onClick={() => setShowCreateAdminModal(false)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/10 transition-colors cursor-pointer" style={{ background: "transparent", border: "none" }}>
               <X size={16} color="rgba(255,255,255,0.6)" />
@@ -2085,7 +2230,7 @@ export default function App() {
       )}
 
       {showCreateSectorModal && isAdmin && (
-        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
           <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
             <button onClick={() => setShowCreateSectorModal(false)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/10 transition-colors cursor-pointer" style={{ background: "transparent", border: "none" }}>
               <X size={16} color="rgba(255,255,255,0.6)" />
@@ -2102,7 +2247,7 @@ export default function App() {
       )}
 
       {showCreateEmployeeModal && isAdmin && (
-        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
           <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
             <button onClick={() => setShowCreateEmployeeModal(null)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/10 transition-colors cursor-pointer" style={{ background: "transparent", border: "none" }}>
               <X size={16} color="rgba(255,255,255,0.6)" />
@@ -2122,7 +2267,7 @@ export default function App() {
 
       {/* Admin Management Modal */}
       {showAdminManagement && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all" style={{ background: "rgba(0,0,0,0.6)" }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all" style={{ background: "rgba(0,0,0,0.6)" }}>
           <div className="w-[450px] rounded-3xl overflow-hidden flex flex-col" style={{ background: "#2A2A3E", border: "1.5px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
             <div style={{ height: 4, background: "linear-gradient(90deg, #9C27B0, #26C6DA)" }} />
             <div className="p-7">
@@ -2183,7 +2328,7 @@ export default function App() {
 
           {/* Edit Admin Sub-Modal */}
           {editingAdmin && (
-            <div className="absolute inset-0 z-[60] flex items-center justify-center backdrop-blur-md" style={{ background: "rgba(0,0,0,0.4)" }}>
+            <div className="fixed inset-0 z-[60] flex items-center justify-center backdrop-blur-md" style={{ background: "rgba(0,0,0,0.4)" }}>
               <div className="w-[380px] rounded-3xl p-7 flex flex-col gap-5" style={{ background: "#32324A", border: "1.5px solid rgba(255,255,255,0.15)", boxShadow: "0 20px 50px rgba(0,0,0,0.5)" }}>
                 <h4 className="text-white font-bold text-xl">Editar Usuario</h4>
                 <div className="flex flex-col gap-4">
@@ -2208,7 +2353,7 @@ export default function App() {
 
       {/* Confirmation Modal */}
       {showConfirmDelete && (
-        <div className="absolute inset-0 z-[200] flex items-center justify-center p-4 backdrop-blur-md" style={{ background: "rgba(0,0,0,0.7)" }}>
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 backdrop-blur-md" style={{ background: "rgba(0,0,0,0.7)" }}>
           <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1.5px solid rgba(255,82,82,0.3)", boxShadow: "0 32px 80px rgba(0,0,0,0.8)" }}>
             <div className="flex items-center justify-center w-14 h-14 rounded-full bg-red-500/10 mb-6 mx-auto">
               <Trash2 size={28} color="#FF5252" />
