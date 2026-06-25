@@ -39,7 +39,9 @@ import {
   Tractor,
   HardHat,
   FileText,
-  Pencil
+  Eye,
+  ImageOff,
+  Upload,
 } from "lucide-react";
 
 
@@ -203,10 +205,12 @@ interface Employee {
   dni?: string | null;          // field from API
   external_code?: string | null;
   is_active: boolean;
+  tiene_foto_frente?: boolean;
+  tiene_foto_dorso?: boolean;
 }
 
 
-function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, onDeleteEmployee, onEditEmployee, onDeleteSector, setShowConfirmDelete }: { sector: Sector; onClose: () => void; onExport: () => void; isAdmin: boolean; onCreateEmployee?: () => void; onDeleteEmployee?: (id: string) => Promise<boolean>; onEditEmployee?: (id: string, data: { first_name: string; last_name: string; dni: string }) => Promise<boolean>; onDeleteSector?: (id: string) => Promise<boolean>; setShowConfirmDelete: (val: any) => void }) {
+function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, onDeleteEmployee, onDeleteSector, setShowConfirmDelete }: { sector: Sector; onClose: () => void; onExport: () => void; isAdmin: boolean; onCreateEmployee?: () => void; onDeleteEmployee?: (id: string) => Promise<boolean>; onDeleteSector?: (id: string) => Promise<boolean>; setShowConfirmDelete: (val: any) => void }) {
   const [showTooltip, setShowTooltip] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [empLoading, setEmpLoading] = useState(true);
@@ -214,14 +218,103 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
   const [absentEmployeeIds, setAbsentEmployeeIds] = useState<Set<string>>(new Set());
   const [absenceLoading, setAbsenceLoading] = useState(false);
   const [localSearch, setLocalSearch] = useState("");
+  const isMissing = sector.state === "missing";
 
-  // ── Edit employee state ───────────────────────────────────────────────────
-  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  // ── Estado editar empleado (con gestión de fotos) ──────────────────────
+  const [editDialogEmp, setEditDialogEmp] = useState<Employee | null>(null);
   const [editFirst, setEditFirst] = useState("");
   const [editLast, setEditLast] = useState("");
   const [editDni, setEditDni] = useState("");
   const [editSaving, setEditSaving] = useState(false);
-  const isMissing = sector.state === "missing";
+  const [fotoData, setFotoData] = useState<{ frente: string | null; dorso: string | null }>({ frente: null, dorso: null });
+  const [fotoLoading, setFotoLoading] = useState<{ frente: boolean; dorso: boolean }>({ frente: false, dorso: false });
+  const [fotoUploading, setFotoUploading] = useState<{ frente: boolean; dorso: boolean }>({ frente: false, dorso: false });
+
+  // ── Estado ver foto ─────────────────────────────────────────────────────
+  const [viewFotoEmp, setViewFotoEmp] = useState<Employee | null>(null);
+  const [viewFotoData, setViewFotoData] = useState<{ frente: string | null; dorso: string | null }>({ frente: null, dorso: null });
+  const [viewFotoLoading, setViewFotoLoading] = useState(false);
+
+  const openEditDialog = async (emp: Employee) => {
+    setEditDialogEmp(emp);
+    setEditFirst(emp.first_name);
+    setEditLast(emp.last_name || "");
+    setEditDni(emp.dni || "");
+    setFotoData({ frente: null, dorso: null });
+    setFotoLoading({ frente: !!emp.tiene_foto_frente, dorso: !!emp.tiene_foto_dorso });
+    const [frente, dorso] = await Promise.all([
+      emp.tiene_foto_frente ? window.electronAPI?.getFoto?.(emp.id, 'frente').catch(() => null) : Promise.resolve(null),
+      emp.tiene_foto_dorso ? window.electronAPI?.getFoto?.(emp.id, 'dorso').catch(() => null) : Promise.resolve(null),
+    ]);
+    setFotoData({ frente: frente ?? null, dorso: dorso ?? null });
+    setFotoLoading({ frente: false, dorso: false });
+  };
+
+  const handleSaveEmployee = async () => {
+    if (!editDialogEmp || editSaving) return;
+    setEditSaving(true);
+    try {
+      const rawTok = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+      const tok = rawTok === "undefined" ? "" : rawTok;
+      const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin/employees/${editDialogEmp.id}`, {
+        method: "PUT",
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': tok },
+        body: JSON.stringify({ first_name: editFirst.trim(), last_name: editLast.trim(), dni: editDni.trim() || null }),
+      });
+      if (res.ok) {
+        setEmployees(prev => prev.map(e =>
+          e.id === editDialogEmp.id ? { ...e, first_name: editFirst.trim(), last_name: editLast.trim(), dni: editDni.trim() || null } : e
+        ));
+        setEditDialogEmp(null);
+      }
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleSubirFoto = async (lado: 'frente' | 'dorso') => {
+    if (!editDialogEmp) return;
+    const filePath = await window.electronAPI?.openFileDialog?.();
+    if (!filePath) return;
+    setFotoUploading(prev => ({ ...prev, [lado]: true }));
+    const res = await window.electronAPI?.uploadFoto?.(editDialogEmp.id, lado, filePath);
+    if (res?.success) {
+      setFotoLoading(prev => ({ ...prev, [lado]: true }));
+      const base64 = await window.electronAPI?.getFoto?.(editDialogEmp.id, lado).catch(() => null);
+      setFotoData(prev => ({ ...prev, [lado]: base64 ?? null }));
+      setFotoLoading(prev => ({ ...prev, [lado]: false }));
+      setEmployees(prev => prev.map(e =>
+        e.id === editDialogEmp.id ? { ...e, [`tiene_foto_${lado}`]: true } : e
+      ));
+      setEditDialogEmp(prev => prev ? { ...prev, [`tiene_foto_${lado}`]: true } : prev);
+    }
+    setFotoUploading(prev => ({ ...prev, [lado]: false }));
+  };
+
+  const handleEliminarFoto = async (lado: 'frente' | 'dorso') => {
+    if (!editDialogEmp) return;
+    const res = await window.electronAPI?.deleteFoto?.(editDialogEmp.id, lado);
+    if (res?.success) {
+      setFotoData(prev => ({ ...prev, [lado]: null }));
+      setEmployees(prev => prev.map(e =>
+        e.id === editDialogEmp.id ? { ...e, [`tiene_foto_${lado}`]: false } : e
+      ));
+      setEditDialogEmp(prev => prev ? { ...prev, [`tiene_foto_${lado}`]: false } : prev);
+    }
+  };
+
+  const openViewFoto = async (emp: Employee) => {
+    if (!emp.tiene_foto_frente && !emp.tiene_foto_dorso) return;
+    setViewFotoEmp(emp);
+    setViewFotoData({ frente: null, dorso: null });
+    setViewFotoLoading(true);
+    const [frente, dorso] = await Promise.all([
+      emp.tiene_foto_frente ? window.electronAPI?.getFoto?.(emp.id, 'frente').catch(() => null) : Promise.resolve(null),
+      emp.tiene_foto_dorso ? window.electronAPI?.getFoto?.(emp.id, 'dorso').catch(() => null) : Promise.resolve(null),
+    ]);
+    setViewFotoData({ frente: frente ?? null, dorso: dorso ?? null });
+    setViewFotoLoading(false);
+  };
 
   // Fecha de hoy en formato YYYY-MM-DD
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -389,6 +482,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
   }, [sector.apiId, todayStr]);
 
   return (
+    <>
     <div
       className="rounded-3xl overflow-hidden flex flex-col"
       style={{
@@ -541,6 +635,16 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
                           {emp.first_name} {emp.last_name}
                         </p>
                         {emp.dni && <p style={{ fontSize: 10, color: isAbsent ? "rgba(255,150,150,0.5)" : "rgba(255,255,255,0.35)" }}>DNI: {emp.dni}</p>}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                          <div style={{
+                            width: 6, height: 6, borderRadius: '50%',
+                            background: emp.tiene_foto_frente && emp.tiene_foto_dorso ? '#4CAF50' : emp.tiene_foto_frente || emp.tiene_foto_dorso ? '#FF9800' : '#EF5350',
+                            flexShrink: 0
+                          }} />
+                          <span style={{ fontSize: 9, color: emp.tiene_foto_frente && emp.tiene_foto_dorso ? '#4CAF50' : emp.tiene_foto_frente || emp.tiene_foto_dorso ? '#FF9800' : '#EF5350', fontWeight: 600 }}>
+                            {emp.tiene_foto_frente && emp.tiene_foto_dorso ? 'DNI completo' : emp.tiene_foto_frente || emp.tiene_foto_dorso ? 'DNI parcial' : 'Sin foto DNI'}
+                          </span>
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -564,19 +668,24 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
                           </span>
                         )
                       )}
-                      {isAdmin && onEditEmployee && (
+                      {(emp.tiene_foto_frente || emp.tiene_foto_dorso) && (
                         <button
-                          onClick={() => {
-                            setEditingEmployee(emp);
-                            setEditFirst(emp.first_name);
-                            setEditLast(emp.last_name);
-                            setEditDni(emp.dni ?? "");
-                          }}
-                          className="p-1.5 rounded-lg hover:bg-purple-500/20 transition-colors"
-                          style={{ cursor: "pointer", color: "#C86FE8" }}
-                          title="Editar empleado"
+                          onClick={() => openViewFoto(emp)}
+                          title="Ver fotos DNI"
+                          className="p-1.5 rounded-lg transition-colors"
+                          style={{ cursor: "pointer", color: "#26C6DA", background: "rgba(38,198,218,0.1)", border: "1px solid rgba(38,198,218,0.25)" }}
                         >
-                          <Pencil size={14} />
+                          <Eye size={13} />
+                        </button>
+                      )}
+                      {isAdmin && (
+                        <button
+                          onClick={() => openEditDialog(emp)}
+                          title="Editar empleado"
+                          className="p-1.5 rounded-lg transition-colors"
+                          style={{ cursor: "pointer", color: "#C86FE8", background: "rgba(156,39,176,0.12)", border: "1px solid rgba(156,39,176,0.25)" }}
+                        >
+                          <UserCog size={13} />
                         </button>
                       )}
                       {isAdmin && onDeleteEmployee && (
@@ -698,105 +807,163 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
           </div>
         </div>
       </div>
+    </div>
 
-      {/* ── Edit employee dialog ──────────────────────────────────────── */}
-      {editingEmployee && (
-        <div
-          className="absolute inset-0 z-50 flex items-center justify-center rounded-3xl"
-          style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) setEditingEmployee(null); }}
-        >
-          <div
-            className="flex flex-col gap-4 rounded-2xl p-6 w-80"
-            style={{ background: "#1E1E2E", border: "1px solid rgba(156,39,176,0.3)", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Pencil size={16} color="#C86FE8" />
-                <p style={{ fontSize: 14, fontWeight: 700, color: "white" }}>Editar empleado</p>
-              </div>
-              <button onClick={() => setEditingEmployee(null)} className="p-1 rounded-lg hover:bg-white/10 transition-colors" style={{ color: "rgba(255,255,255,0.4)" }}>
-                <X size={16} />
-              </button>
+    {/* ── Dialog editar empleado (con fotos) ─────────────────────────────── */}
+    {editDialogEmp && (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ background: '#1a1225', border: '1px solid rgba(156,39,176,0.35)', borderRadius: 20, padding: 24, width: '100%', maxWidth: 460, maxHeight: '90vh', overflowY: 'auto' }}>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+            <div>
+              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Editar Empleado</p>
+              <p style={{ fontSize: 15, fontWeight: 700, color: 'white' }}>{editDialogEmp.first_name} {editDialogEmp.last_name}</p>
             </div>
+            <button onClick={() => setEditDialogEmp(null)} style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 8, padding: '6px 10px', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+          </div>
 
-            {/* Fields */}
-            <div className="flex flex-col gap-3">
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Nombre</label>
-                <input
-                  value={editFirst}
-                  onChange={(e) => setEditFirst(e.target.value)}
-                  placeholder="Nombre"
-                  className="w-full mt-1 px-3 py-2 rounded-xl text-white outline-none"
-                  style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 13 }}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Apellido</label>
-                <input
-                  value={editLast}
-                  onChange={(e) => setEditLast(e.target.value)}
-                  placeholder="Apellido"
-                  className="w-full mt-1 px-3 py-2 rounded-xl text-white outline-none"
-                  style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 13 }}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>DNI</label>
-                <input
-                  value={editDni}
-                  onChange={(e) => setEditDni(e.target.value)}
-                  placeholder="DNI (opcional)"
-                  inputMode="numeric"
-                  className="w-full mt-1 px-3 py-2 rounded-xl text-white outline-none"
-                  style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 13 }}
-                />
-              </div>
+          {/* Campos del empleado */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
+            <div>
+              <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Nombre</p>
+              <input
+                value={editFirst}
+                onChange={e => setEditFirst(e.target.value)}
+                style={{ width: '100%', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, padding: '9px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+              />
             </div>
-
-            {/* Buttons */}
-            <div className="flex gap-2 mt-1">
-              <button
-                onClick={() => setEditingEmployee(null)}
-                disabled={editSaving}
-                className="flex-1 py-2.5 rounded-xl font-semibold transition-all hover:bg-white/10"
-                style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
-              >
-                Cancelar
-              </button>
-              <button
-                disabled={editSaving || !editFirst.trim()}
-                onClick={async () => {
-                  if (!onEditEmployee) return;
-                  setEditSaving(true);
-                  const ok = await onEditEmployee(editingEmployee.id, {
-                    first_name: editFirst.trim(),
-                    last_name: editLast.trim(),
-                    dni: editDni.trim(),
-                  });
-                  setEditSaving(false);
-                  if (ok) {
-                    setEmployees(prev => prev.map(e =>
-                      e.id === editingEmployee.id
-                        ? { ...e, first_name: editFirst.trim(), last_name: editLast.trim(), dni: editDni.trim() || null }
-                        : e
-                    ));
-                    setEditingEmployee(null);
-                  }
-                }}
-                className="flex-1 py-2.5 rounded-xl font-bold transition-all hover:opacity-90 active:scale-[0.98]"
-                style={{ fontSize: 13, color: "white", background: "linear-gradient(135deg, #9C27B0, #6A1B9A)", border: "none", cursor: editSaving || !editFirst.trim() ? "not-allowed" : "pointer", opacity: editSaving || !editFirst.trim() ? 0.5 : 1 }}
-              >
-                {editSaving ? "Guardando…" : "Guardar"}
-              </button>
+            <div>
+              <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Apellido</p>
+              <input
+                value={editLast}
+                onChange={e => setEditLast(e.target.value)}
+                style={{ width: '100%', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, padding: '9px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div>
+              <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>DNI</p>
+              <input
+                value={editDni}
+                onChange={e => setEditDni(e.target.value)}
+                style={{ width: '100%', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, padding: '9px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+              />
             </div>
           </div>
+
+          {/* Divisor */}
+          <div style={{ height: 1, background: 'rgba(255,255,255,0.07)', margin: '0 0 16px' }} />
+          <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>Fotos del DNI</p>
+
+          {/* Frente y Dorso */}
+          {(['frente', 'dorso'] as const).map((lado) => {
+            const tieneKey = lado === 'frente' ? 'tiene_foto_frente' : 'tiene_foto_dorso';
+            const tiene = editDialogEmp[tieneKey];
+            const imgSrc = fotoData[lado];
+            const isLoading = fotoLoading[lado];
+            const isUploading = fotoUploading[lado];
+            return (
+              <div key={lado} style={{ marginBottom: 12, background: 'rgba(255,255,255,0.04)', borderRadius: 12, padding: 14, border: '1px solid rgba(255,255,255,0.07)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    {lado === 'frente' ? 'Frente' : 'Dorso'} del DNI
+                  </p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: tiene ? '#4CAF50' : '#EF5350' }} />
+                    <span style={{ fontSize: 9, color: tiene ? '#4CAF50' : '#EF5350', fontWeight: 600 }}>{tiene ? 'Con foto' : 'Sin foto'}</span>
+                  </div>
+                </div>
+                {isLoading ? (
+                  <div style={{ width: '100%', height: 100, background: 'rgba(255,255,255,0.04)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ width: 20, height: 20, border: '2px solid rgba(200,111,232,0.3)', borderTop: '2px solid #C86FE8', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  </div>
+                ) : imgSrc ? (
+                  <img src={imgSrc} alt={`DNI ${lado}`} style={{ width: '100%', height: 'auto', maxHeight: 140, objectFit: 'contain', borderRadius: 8, background: '#000', display: 'block', marginBottom: 10 }} />
+                ) : (
+                  <div style={{ width: '100%', height: 70, background: 'rgba(255,255,255,0.02)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: '1px dashed rgba(255,255,255,0.1)', marginBottom: 10 }}>
+                    <ImageOff size={18} color="rgba(255,255,255,0.15)" />
+                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)' }}>Sin foto</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    onClick={() => handleSubirFoto(lado)}
+                    disabled={isUploading}
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '7px 10px', borderRadius: 8, border: '1px solid rgba(200,111,232,0.35)', background: 'rgba(156,39,176,0.15)', color: '#C86FE8', fontSize: 10, fontWeight: 700, cursor: isUploading ? 'not-allowed' : 'pointer', opacity: isUploading ? 0.6 : 1 }}
+                  >
+                    {isUploading ? <div style={{ width: 10, height: 10, border: '2px solid rgba(200,111,232,0.3)', borderTop: '2px solid #C86FE8', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <Upload size={10} />}
+                    {tiene ? 'Cambiar' : 'Subir foto'}
+                  </button>
+                  {tiene && (
+                    <button
+                      onClick={() => handleEliminarFoto(lado)}
+                      disabled={isUploading}
+                      style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '7px 10px', borderRadius: 8, border: '1px solid rgba(255,82,82,0.3)', background: 'rgba(255,82,82,0.1)', color: '#FF5252', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}
+                    >
+                      <Trash2 size={10} />
+                      Eliminar
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Botones guardar/cancelar */}
+          <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+            <button
+              onClick={() => setEditDialogEmp(null)}
+              style={{ flex: 1, padding: '10px 0', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)', background: 'transparent', color: 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleSaveEmployee}
+              disabled={editSaving}
+              style={{ flex: 2, padding: '10px 0', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, #9C27B0, #26C6DA)', color: 'white', fontSize: 13, fontWeight: 700, cursor: editSaving ? 'not-allowed' : 'pointer', opacity: editSaving ? 0.7 : 1 }}
+            >
+              {editSaving ? 'Guardando...' : 'Guardar cambios'}
+            </button>
+          </div>
         </div>
-      )}
-    </div>
+      </div>
+    )}
+
+    {/* ── Dialog ver fotos (solo lectura) ─────────────────────────────────── */}
+    {viewFotoEmp && (
+      <div
+        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) setViewFotoEmp(null); }}
+      >
+        <div style={{ background: '#1a1225', border: '1px solid rgba(38,198,218,0.3)', borderRadius: 20, padding: 24, width: '100%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+            <div>
+              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Fotos del DNI</p>
+              <p style={{ fontSize: 15, fontWeight: 700, color: 'white' }}>{viewFotoEmp.first_name} {viewFotoEmp.last_name}</p>
+            </div>
+            <button onClick={() => setViewFotoEmp(null)} style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 8, padding: '6px 10px', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+          </div>
+          {viewFotoLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 160 }}>
+              <div style={{ width: 28, height: 28, border: '2px solid rgba(38,198,218,0.3)', borderTop: '2px solid #26C6DA', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {(['frente', 'dorso'] as const).map(lado => {
+                const src = viewFotoData[lado];
+                if (!src) return null;
+                return (
+                  <div key={lado}>
+                    <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>{lado === 'frente' ? 'Frente' : 'Dorso'} del DNI</p>
+                    <img src={src} alt={`DNI ${lado}`} style={{ width: '100%', borderRadius: 12, objectFit: 'contain', background: '#000', display: 'block' }} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -1647,7 +1814,8 @@ export default function App() {
     const headers = getHeaders();
     try {
       const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin/employees/${id}`, {
-        method: "DELETE", headers
+        method: "PUT", headers,
+        body: JSON.stringify({ is_active: false })
       });
       if (!res.ok) {
         const d = await res.json();
@@ -1655,32 +1823,8 @@ export default function App() {
         return false;
       }
       return true;
-    } catch (e) {
-      alert("Error de conexión");
-      return false;
-    }
-  };
-
-  const handleEditEmployee = async (id: string, data: { first_name: string; last_name: string; dni: string }) => {
-    const headers = getHeaders();
-    try {
-      const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin/employees/${id}`, {
-        method: "PUT",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          first_name: data.first_name,
-          last_name: data.last_name,
-          dni: data.dni || null,
-        }),
-      });
-      if (!res.ok) {
-        const d = await res.json();
-        alert(d.error || "Error al guardar empleado");
-        return false;
-      }
-      return true;
-    } catch (e) {
-      alert("Error de conexión");
+    } catch (e) { 
+      alert("Error de conexión"); 
       return false;
     }
   };
@@ -1906,7 +2050,7 @@ export default function App() {
                         <UserCog size={14} /> Gestionar Usuarios
                       </button>
                       <button
-                        onClick={() => { setShowSettingsMenu(false); alert("StaffAdmin - Panel de Control\nVersión: 1.5.0"); }}
+                        onClick={() => { setShowSettingsMenu(false); alert("StaffAdmin - Panel de Control\nVersión: 1.0.9"); }}
                         className="w-full text-left px-5 py-3 text-white transition-colors hover:bg-white/10 flex items-center gap-2"
                         style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none" }}
                       >
@@ -2061,7 +2205,7 @@ export default function App() {
           <div
             className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all"
             style={{ background: "rgba(0,0,0,0.6)" }}
-            onClick={() => setSelectedSector(null)}
+            onClick={() => { if (!(window as any).__filePickerOpen) setSelectedSector(null); }}
           >
             <FloatingModal
               sector={selectedSector!}
@@ -2073,7 +2217,6 @@ export default function App() {
                 setShowCreateEmployeeModal(selectedSector!);
               }}
               onDeleteEmployee={handleDeleteEmployee}
-              onEditEmployee={handleEditEmployee}
               onDeleteSector={handleDeleteSector}
               setShowConfirmDelete={setShowConfirmDelete}
             />
@@ -2085,7 +2228,7 @@ export default function App() {
       {
         showExportModal && (
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all"
+            className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all"
             style={{ background: "rgba(0,0,0,0.6)" }}
             onClick={() => setShowExportModal(false)}
           >
@@ -2146,7 +2289,7 @@ export default function App() {
       {/* Login Modal Overlay */}
       {
         !isLoggedIn && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
+          <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
             <div className="rounded-3xl p-8 flex flex-col items-center relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
               {/* Logo / ícono */}
               <div className="flex items-center justify-center rounded-2xl mb-5" style={{ width: 64, height: 64, background: "linear-gradient(135deg, #9C27B0, #26C6DA)", boxShadow: "0 8px 24px rgba(156,39,176,0.4)" }}>
@@ -2213,7 +2356,7 @@ export default function App() {
 
       {/* Creation Modals (Admin privileges only) */}
       {showCreateAdminModal && isAdmin && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
+        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
           <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
             <button onClick={() => setShowCreateAdminModal(false)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/10 transition-colors cursor-pointer" style={{ background: "transparent", border: "none" }}>
               <X size={16} color="rgba(255,255,255,0.6)" />
@@ -2230,7 +2373,7 @@ export default function App() {
       )}
 
       {showCreateSectorModal && isAdmin && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
+        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
           <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
             <button onClick={() => setShowCreateSectorModal(false)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/10 transition-colors cursor-pointer" style={{ background: "transparent", border: "none" }}>
               <X size={16} color="rgba(255,255,255,0.6)" />
@@ -2247,7 +2390,7 @@ export default function App() {
       )}
 
       {showCreateEmployeeModal && isAdmin && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
+        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
           <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
             <button onClick={() => setShowCreateEmployeeModal(null)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/10 transition-colors cursor-pointer" style={{ background: "transparent", border: "none" }}>
               <X size={16} color="rgba(255,255,255,0.6)" />
@@ -2267,7 +2410,7 @@ export default function App() {
 
       {/* Admin Management Modal */}
       {showAdminManagement && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all" style={{ background: "rgba(0,0,0,0.6)" }}>
+        <div className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all" style={{ background: "rgba(0,0,0,0.6)" }}>
           <div className="w-[450px] rounded-3xl overflow-hidden flex flex-col" style={{ background: "#2A2A3E", border: "1.5px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
             <div style={{ height: 4, background: "linear-gradient(90deg, #9C27B0, #26C6DA)" }} />
             <div className="p-7">
@@ -2328,7 +2471,7 @@ export default function App() {
 
           {/* Edit Admin Sub-Modal */}
           {editingAdmin && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center backdrop-blur-md" style={{ background: "rgba(0,0,0,0.4)" }}>
+            <div className="absolute inset-0 z-[60] flex items-center justify-center backdrop-blur-md" style={{ background: "rgba(0,0,0,0.4)" }}>
               <div className="w-[380px] rounded-3xl p-7 flex flex-col gap-5" style={{ background: "#32324A", border: "1.5px solid rgba(255,255,255,0.15)", boxShadow: "0 20px 50px rgba(0,0,0,0.5)" }}>
                 <h4 className="text-white font-bold text-xl">Editar Usuario</h4>
                 <div className="flex flex-col gap-4">
@@ -2353,7 +2496,7 @@ export default function App() {
 
       {/* Confirmation Modal */}
       {showConfirmDelete && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 backdrop-blur-md" style={{ background: "rgba(0,0,0,0.7)" }}>
+        <div className="absolute inset-0 z-[200] flex items-center justify-center p-4 backdrop-blur-md" style={{ background: "rgba(0,0,0,0.7)" }}>
           <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1.5px solid rgba(255,82,82,0.3)", boxShadow: "0 32px 80px rgba(0,0,0,0.8)" }}>
             <div className="flex items-center justify-center w-14 h-14 rounded-full bg-red-500/10 mb-6 mx-auto">
               <Trash2 size={28} color="#FF5252" />

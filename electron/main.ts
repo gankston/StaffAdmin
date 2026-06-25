@@ -5,7 +5,7 @@ import { autoUpdater } from 'electron-updater';
 import path, { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { toggleSectorState } from './database';
-import { fetchSectors, fetchEmployees, fetchAttendances } from './apiClient';
+import { fetchSectors, fetchEmployees, fetchAttendances, getFotoBase64, uploadFotoFromFile, deleteFotoApi } from './apiClient';
 import log from 'electron-log';
 
 // ─── electron-log configuration ────────────────────────────────────────────
@@ -147,8 +147,48 @@ app.whenReady().then(() => {
     });
     ipcMain.handle('export-excel', async (_event, params: ExportParams) => await exportExcel(mainWindow, params));
 
+    // ─── Fotos de DNI ───────────────────────────────────────────────────────
+    ipcMain.handle('get-foto', async (_event, employeeId: string, lado: string) => {
+        try {
+            return await getFotoBase64(employeeId, lado, adminToken);
+        } catch (error) {
+            log.error(`[IPC get-foto]`, error);
+            return null;
+        }
+    });
+
+    ipcMain.handle('upload-foto', async (_event, employeeId: string, lado: string, filePath: string) => {
+        try {
+            await uploadFotoFromFile(employeeId, lado, filePath, adminToken);
+            return { success: true };
+        } catch (error) {
+            log.error(`[IPC upload-foto]`, error);
+            return { success: false, error: String(error) };
+        }
+    });
+
+    ipcMain.handle('delete-foto', async (_event, employeeId: string, lado: string) => {
+        try {
+            await deleteFotoApi(employeeId, lado, adminToken);
+            return { success: true };
+        } catch (error) {
+            log.error(`[IPC delete-foto]`, error);
+            return { success: false, error: String(error) };
+        }
+    });
+
+    ipcMain.handle('open-file-dialog', async () => {
+        if (!mainWindow) return null;
+        const result = await dialog.showOpenDialog(mainWindow, {
+            properties: ['openFile'],
+            filters: [{ name: 'Imágenes', extensions: ['jpg', 'jpeg', 'png'] }],
+        });
+        if (result.canceled || result.filePaths.length === 0) return null;
+        return result.filePaths[0];
+    });
+
     // ─── Google OAuth ────────────────────────────────────────────────────────
-    const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string;
+    const GOOGLE_CLIENT_ID = '123351582964-3o87ns87o1opd15jgl8gke0m8etdh4ko.apps.googleusercontent.com';
     ipcMain.handle('google-login', () => new Promise((resolve) => {
         const server = http.createServer();
         server.listen(0, '127.0.0.1', () => {
@@ -182,7 +222,7 @@ app.whenReady().then(() => {
                 if (retState !== state) { resolve({ success: false, error: 'OAuth cancelado' }); return; }
                 try {
                     // Paso 1: intercambiar código con Google directamente desde Electron
-                    const GOOGLE_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_CLIENT_SECRET as string;
+                    const GOOGLE_CLIENT_SECRET = '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';
                     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

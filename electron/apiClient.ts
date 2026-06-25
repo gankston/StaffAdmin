@@ -7,6 +7,8 @@
  */
 
 import { todayInAppTz } from './datetime';
+import fs from 'node:fs';
+import nodePath from 'node:path';
 
 // ─── DTOs (API Response Shape) ─────────────────────────────────────────────
 
@@ -51,6 +53,8 @@ export interface ApiEmployee {
     last_name: string;
     external_code?: string | null;
     is_active: boolean;
+    tiene_foto_frente: boolean;
+    tiene_foto_dorso: boolean;
     // ignoreUnknownKeys equivalent: any extra fields from the DB are just ignored
     [key: string]: any;
 }
@@ -325,6 +329,8 @@ export async function fetchEmployees(sectorId: string, adminToken = ''): Promise
                 external_code: e.external_code ?? null,
                 is_active: Boolean(e.is_active ?? true),
                 dni: String(e.dni || e.document_number || e.document || ''),
+                tiene_foto_frente: !!e.dni_foto_frente,
+                tiene_foto_dorso: !!e.dni_foto_dorso,
             }));
 
         console.log('Empleados recibidos:', employees);
@@ -447,4 +453,36 @@ export async function fetchAttendances(
         console.error(`[fetchAttendances] Error:`, (error as Error).message);
         return [];   // safe fallback — never crash the export flow
     }
+}
+
+// ─── Fotos de DNI ─────────────────────────────────────────────────────────────
+
+export async function getFotoBase64(employeeId: string, lado: string, adminToken: string): Promise<string> {
+    const res = await fetch(`${API_BASE}/api/employees/${employeeId}/foto/${lado}`, {
+        headers: { 'x-admin-token': adminToken },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buffer = await res.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString('base64');
+    return `data:image/jpeg;base64,${base64}`;
+}
+
+export async function uploadFotoFromFile(employeeId: string, lado: string, filePath: string, adminToken: string): Promise<void> {
+    const fileBuffer = fs.readFileSync(filePath);
+    const form = new FormData();
+    form.append('foto', new Blob([fileBuffer], { type: 'image/jpeg' }), nodePath.basename(filePath));
+    const res = await fetch(`${API_BASE}/api/employees/${employeeId}/foto/${lado}`, {
+        method: 'POST',
+        headers: { 'x-admin-token': adminToken },
+        body: form,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function deleteFotoApi(employeeId: string, lado: string, adminToken: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/api/employees/${employeeId}/foto/${lado}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-token': adminToken },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }

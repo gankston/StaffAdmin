@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     generatePdfReport: (params: any) => ipcRenderer.invoke('generate-pdf-report', params),
     setAdminToken: (token: string) => ipcRenderer.invoke('set-admin-token', token),
     googleLogin: () => ipcRenderer.invoke('google-login'),
+    getFoto: (employeeId: string, lado: string) => ipcRenderer.invoke('get-foto', employeeId, lado),
+    uploadFoto: (employeeId: string, lado: string, filePath: string) => ipcRenderer.invoke('upload-foto', employeeId, lado, filePath),
+    deleteFoto: (employeeId: string, lado: string) => ipcRenderer.invoke('delete-foto', employeeId, lado),
+    openFileDialog: () => ipcRenderer.invoke('open-file-dialog'),
 });
 
 export type ElectronAPI = {
@@ -21,4 +25,8 @@ export type ElectronAPI = {
     generatePdfReport: (params: any) => Promise<{ success: boolean; base64?: string; fileName?: string; error?: string }>;
     setAdminToken: (token: string) => Promise<void>;
     googleLogin: () => Promise<{ success: boolean; token?: string; user?: { email: string; name: string; picture?: string }; error?: string }>;
+    getFoto: (employeeId: string, lado: string) => Promise<string | null>;
+    uploadFoto: (employeeId: string, lado: string, filePath: string) => Promise<{ success: boolean; error?: string }>;
+    deleteFoto: (employeeId: string, lado: string) => Promise<{ success: boolean; error?: string }>;
+    openFileDialog: () => Promise<string | null>;
 }
