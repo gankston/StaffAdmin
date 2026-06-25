@@ -1,4 +1,56 @@
-# CLAUDE.md
+# CLAUDE.md — StaffAdmin (Electron Windows)
+
+## Acceso directo a la base de datos
+
+**PostgreSQL en Railway — usar siempre la URL pública:**
+
+```
+postgresql://postgres:LqmEneHjwfiTEgmgnyLVPzexsvoKHcYC@viaduct.proxy.rlwy.net:58870/railway
+```
+
+```bash
+psql "postgresql://postgres:LqmEneHjwfiTEgmgnyLVPzexsvoKHcYC@viaduct.proxy.rlwy.net:58870/railway" -c "SELECT ..."
+```
+
+## API Backend
+
+**URL de producción:** `https://staffaxis-new-version-production.up.railway.app`
+
+**Admin token:** `staffaxis_admin_token_2024_prod`  
+Header: `x-admin-token: staffaxis_admin_token_2024_prod`
+
+### Endpoints clave
+
+```
+GET    /api/sectors
+GET    /api/employees?sector_id=<id>
+POST   /api/admin/employees          → { first_name, last_name, dni, sector_id }
+PUT    /api/admin/employees/:id      → { first_name, last_name, dni }
+DELETE /api/admin/employees/:id
+GET/POST/DELETE /api/employees/:id/foto/:lado   (lado = frente | dorso)
+```
+
+## Dónde editar el código
+
+- **Source para editar:** La carpeta `StaffAdmin-vXX/resources/app/` del desktop (es el output del packager, sin git)
+- **Este repo (git):** Clonar localmente, copiar los archivos modificados acá y pushear
+- Al hacer cambios, los 5 archivos clave son: `electron/apiClient.ts`, `electron/main.ts`, `electron/preload.ts`, `src/app/App.tsx`, `package.json`
+
+## Sectores conocidos
+
+| Nombre | ID |
+|--------|-----|
+| OTITO | `612deb14-b814-49dc-95d1-d413a61abdf6` |
+| PAMPA BLANCA | `51c0cfaa-3f96-45e7-9081-99735d7f44f3` |
+
+## Reglas generales
+
+- Responder siempre en **español informal**
+- No hacer commits ni push sin confirmación explícita del usuario
+- No cambiar el método de storage de fotos (Volume → archivos, nunca bytea)
+- Al pushear: GitHub puede bloquear por el OAuth secret en main.ts — hacer bypass manual en la web de GitHub
+
+---
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
