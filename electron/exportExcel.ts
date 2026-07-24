@@ -26,6 +26,7 @@ export interface ExportParams {
         hours?: number | null;
         status?: string | null;
         record_sector_name?: string | null;
+        notes?: string | null;
         [key: string]: any;
     }>;
     absences?: Array<{       // ausencias de /api/absences
@@ -186,6 +187,17 @@ export async function exportExcel(
 
             granTotalHoras += totalHorasEmpleado;
 
+            // Notas de asistencias del empleado (una por día que tenga nota)
+            const empNotasParts: string[] = [];
+            empAtts.forEach(a => {
+                const nota = a.notes;
+                if (nota && String(nota).trim()) {
+                    const day = a.date ? String(a.date).slice(8, 10) : '?';
+                    empNotasParts.push(`${day}: ${String(nota).trim()}`);
+                }
+            });
+            const notasAsistencias = empNotasParts.join(' | ');
+
             // Construir la nota de sectores anteriores si existen traslados
             let notaOtrosSectores = '';
             foreignSectorsMap.forEach((horas, sectorName) => {
@@ -196,6 +208,13 @@ export async function exportExcel(
             // Observación: traslado entrante
             const fromSector = transferInMap.get(emp.id);
             if (fromSector && !notaOtrosSectores) notaOtrosSectores = `Viene de ${fromSector.toUpperCase()}`;
+
+            // Combinar notas de asistencias + notas de sector
+            if (notasAsistencias) {
+                notaOtrosSectores = notaOtrosSectores
+                    ? `${notasAsistencias} | ${notaOtrosSectores}`
+                    : notasAsistencias;
+            }
 
             // CRÍTICO: Agregar la fila del empleado a excelData
             excelData.push([
