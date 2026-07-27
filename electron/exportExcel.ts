@@ -144,6 +144,8 @@ export async function exportExcel(
         // 2. Iterar sobre los empleados y agregarlos a la matriz
         employees.forEach((emp, index) => {
             let totalHorasEmpleado = 0;
+            let totalCosechaEmpleado = 0;
+            let totalImporteEmpleado = 0;
             const empAtts = attendances.filter(a => String(a.employee_id) === String(emp.id) || (emp.dni && a.dni === emp.dni));
             const empAbsences = absencesByEmp.get(emp.id) ?? [];
 
@@ -161,31 +163,59 @@ export async function exportExcel(
                     if (att.status === 'Faltante') {
                         return 'AUSENTE';
                     } else {
-                        // work_value puede ser '8', 'C', '$500', o un número legacy
+                        // work_value puede ser '8H', 'C', '$500', '4|C:33', '0|AB:47573,53', etc.
                         const rawVal = att.work_value ?? att.hours ?? '';
                         const valStr = String(rawVal).trim();
                         if (valStr === '' || valStr === 'null') return '';
+
+                        // Formato compuesto: "{horas}|C:{numero}" o "{horas}|AB:{importe}"
+                        if (valStr.includes('|')) {
+                            const [hrsPart, rest] = valStr.split('|');
+                            const hrsNum = parseFloat(hrsPart);
+                            if (!isNaN(hrsNum) && hrsNum > 0) totalHorasEmpleado += hrsNum;
+                            // Acumular cosecha o importe en el total del empleado
+                            if (rest?.startsWith('C:')) {
+                                const kg = parseFloat(rest.slice(2).replace(',', '.'));
+                                if (!isNaN(kg)) totalCosechaEmpleado += kg;
+                            } else if (rest?.startsWith('AB:')) {
+                                const imp = parseFloat(rest.slice(3).replace(',', '.'));
+                                if (!isNaN(imp)) totalImporteEmpleado += imp;
+                            }
+                            return `${hrsNum > 0 ? hrsNum + 'H' : '0H'}|${rest}`;
+                        }
+
+                        // Valor standalone '$36400' → importe
+                        if (valStr.startsWith('$')) {
+                            const imp = parseFloat(valStr.slice(1).replace(',', '.'));
+                            if (!isNaN(imp) && imp > 0) totalImporteEmpleado += imp;
+                            return valStr;
+                        }
+
                         const numericVal = parseFloat(valStr);
                         if (!isNaN(numericVal)) {
                             totalHorasEmpleado += numericVal;
-                            
-                            // Si el registro es de OTRO sector, lo sumamos al desglose informativos (para traslados)
                             if (att.record_sector_name && att.record_sector_name !== params?.sectorName) {
                                 const currentSum = foreignSectorsMap.get(att.record_sector_name) ?? 0;
                                 foreignSectorsMap.set(att.record_sector_name, currentSum + numericVal);
                             }
-                            
-                            return numericVal;
+                            return `${numericVal}H`;
                         }
-                        // 'C' or '$500' - special types, don't add to total
+                        // 'C' standalone — cosecha sin cantidad
                         return valStr;
                     }
                 } else {
-                    return ''; // sin horas cargadas
+                    return '';
                 }
             });
 
             granTotalHoras += totalHorasEmpleado;
+
+            // Celda TOTAL del empleado: arma un string compuesto con todo lo que trabajó
+            const partesTotalEmp: string[] = [];
+            if (totalHorasEmpleado > 0) partesTotalEmp.push(`${totalHorasEmpleado}H`);
+            if (totalCosechaEmpleado > 0) partesTotalEmp.push(`C:${totalCosechaEmpleado}`);
+            if (totalImporteEmpleado > 0) partesTotalEmp.push(`$${totalImporteEmpleado.toLocaleString('es')}`);
+            const totalCellEmp = partesTotalEmp.length > 0 ? partesTotalEmp.join(' | ') : 0;
 
             // Notas de asistencias del empleado (una por día que tenga nota)
             const empNotasParts: string[] = [];
@@ -198,32 +228,28 @@ export async function exportExcel(
             });
             const notasAsistencias = empNotasParts.join(' | ');
 
-            // Construir la nota de sectores anteriores si existen traslados
             let notaOtrosSectores = '';
             foreignSectorsMap.forEach((horas, sectorName) => {
                 if (notaOtrosSectores) notaOtrosSectores += ' | ';
                 notaOtrosSectores += `${horas} hs en ${sectorName.toUpperCase()}`;
             });
 
-            // Observación: traslado entrante
             const fromSector = transferInMap.get(emp.id);
             if (fromSector && !notaOtrosSectores) notaOtrosSectores = `Viene de ${fromSector.toUpperCase()}`;
 
-            // Combinar notas de asistencias + notas de sector
             if (notasAsistencias) {
                 notaOtrosSectores = notaOtrosSectores
                     ? `${notasAsistencias} | ${notaOtrosSectores}`
                     : notasAsistencias;
             }
 
-            // CRÍTICO: Agregar la fila del empleado a excelData
             excelData.push([
                 index + 1,
                 emp.dni || (emp as any).document_number || (emp as any).document || 'Sin datos',
                 `${emp.last_name} ${emp.first_name}`.trim(),
                 ...horasDelEmpleado,
-                totalHorasEmpleado,
-                notaOtrosSectores // Columna de OBSERVACIONES
+                totalCellEmp,
+                notaOtrosSectores
             ]);
         });
 
@@ -251,21 +277,45 @@ export async function exportExcel(
         let orphanIndex = employees.length + 1;
         orphanMap.forEach(({ first_name, last_name, dni, atts }, empId) => {
             let totalHorasOrphan = 0;
+            let totalCosechaOrphan = 0;
+            let totalImporteOrphan = 0;
             const horasOrphan = dateStrings.map(dateStr => {
                 const att = atts.find(a => a.date && a.date.startsWith(dateStr));
                 if (!att) return '';
                 const rawVal = att.work_value ?? att.hours ?? '';
                 const valStr = String(rawVal).trim();
                 if (valStr === '' || valStr === 'null') return '';
+                if (valStr.includes('|')) {
+                    const [hrsPart, rest] = valStr.split('|');
+                    const hrsNum = parseFloat(hrsPart);
+                    if (!isNaN(hrsNum) && hrsNum > 0) totalHorasOrphan += hrsNum;
+                    if (rest?.startsWith('C:')) {
+                        const kg = parseFloat(rest.slice(2).replace(',', '.'));
+                        if (!isNaN(kg)) totalCosechaOrphan += kg;
+                    } else if (rest?.startsWith('AB:')) {
+                        const imp = parseFloat(rest.slice(3).replace(',', '.'));
+                        if (!isNaN(imp)) totalImporteOrphan += imp;
+                    }
+                    return `${hrsNum > 0 ? hrsNum + 'H' : '0H'}|${rest}`;
+                }
+                if (valStr.startsWith('$')) {
+                    const imp = parseFloat(valStr.slice(1).replace(',', '.'));
+                    if (!isNaN(imp) && imp > 0) totalImporteOrphan += imp;
+                    return valStr;
+                }
                 const numericVal = parseFloat(valStr);
                 if (!isNaN(numericVal)) {
                     totalHorasOrphan += numericVal;
-                    return numericVal;
+                    return `${numericVal}H`;
                 }
                 return valStr;
             });
             granTotalHoras += totalHorasOrphan;
-            // Intentar obtener sector destino: primero desde tabla transfers, luego desde current_sector_name en asistencias
+            const partesOrphan: string[] = [];
+            if (totalHorasOrphan > 0) partesOrphan.push(`${totalHorasOrphan}H`);
+            if (totalCosechaOrphan > 0) partesOrphan.push(`C:${totalCosechaOrphan}`);
+            if (totalImporteOrphan > 0) partesOrphan.push(`$${totalImporteOrphan.toLocaleString('es')}`);
+            const totalCellOrphan = partesOrphan.length > 0 ? partesOrphan.join(' | ') : 0;
             const toSector = transferOutMap.get(empId)
                 ?? atts.find(a => a.current_sector_name && a.current_sector_name !== params?.sectorName)?.current_sector_name
                 ?? atts[0]?.current_sector_name;
@@ -277,15 +327,17 @@ export async function exportExcel(
                 dni,
                 `${last_name} ${first_name}`.trim(),
                 ...horasOrphan,
-                totalHorasOrphan,
+                totalCellOrphan,
                 notaOrphan,
             ]);
         });
 
         // 4. Construir e insertar la fila del Gran Total al final
+        // El gran total va en la columna TOTAL (penúltima), no en OBSERVACIONES (última)
+        const totalColIdx = filaCabeceras.length - 2; // 'TOTAL' está antes de 'OBSERVACIONES'
         const filaFinal = Array(filaCabeceras.length).fill('');
         filaFinal[2] = 'TOTAL';
-        filaFinal[filaFinal.length - 1] = granTotalHoras;
+        filaFinal[totalColIdx] = `${granTotalHoras}H`;
         excelData.push(filaFinal);
 
         const ws = XLSX.utils.aoa_to_sheet(excelData);
@@ -300,7 +352,8 @@ export async function exportExcel(
         for (let i = 0; i < daysArr.length; i++) cols.push({ wch: 6 });
 
         // Add width for TOTAL column
-        cols.push({ wch: 10 });
+        cols.push({ wch: 22 }); // TOTAL (más ancho para "20H | C:371 | $47573")
+        cols.push({ wch: 30 }); // OBSERVACIONES
 
         ws['!cols'] = cols;
 

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 
 
 import {
@@ -78,6 +79,8 @@ const getIcon = (iconName: string, size = 24) => {
 
 function SectorDropdown({ value, onChange, sectors }: { value: string; onChange: (v: string) => void; sectors: Sector[] }) {
   const [open, setOpen] = useState(false);
+  const [dropPos, setDropPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -88,13 +91,54 @@ function SectorDropdown({ value, onChange, sectors }: { value: string; onChange:
     return () => document.removeEventListener("mousedown", fn);
   }, []);
 
-  // Dynamic options: "Todos" + real sector names from API (Tarea 2 + 4: sin placeholders)
+  const handleToggle = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setDropPos({ top: r.bottom + 6, left: r.left, width: r.width });
+    }
+    setOpen((v) => !v);
+  };
+
   const options = ["Todos", ...sectors.map((s) => s.name)];
+
+  const dropdown = open && dropPos ? (
+    <div
+      style={{
+        position: "fixed",
+        top: dropPos.top,
+        left: dropPos.left,
+        width: dropPos.width,
+        zIndex: 99999,
+        background: "#232336",
+        border: "1.5px solid rgba(255,255,255,0.12)",
+        boxShadow: "0 16px 48px rgba(0,0,0,0.7)",
+        borderRadius: 14,
+        maxHeight: 280,
+        overflowY: "auto",
+      }}
+    >
+      {options.map((opt) => (
+        <button
+          key={opt}
+          onClick={() => { onChange(opt); setOpen(false); }}
+          className="w-full flex items-center px-5 py-3.5 text-left text-white"
+          style={{
+            background: opt === value ? "rgba(156,39,176,0.18)" : "transparent",
+            borderLeft: opt === value ? "3px solid #9C27B0" : "3px solid transparent",
+            fontSize: 14, fontWeight: opt === value ? 600 : 400, cursor: "pointer",
+          }}
+        >
+          {opt}
+        </button>
+      ))}
+    </div>
+  ) : null;
 
   return (
     <div ref={ref} className="relative w-full">
       <button
-        onClick={() => setOpen((v) => !v)}
+        ref={btnRef}
+        onClick={handleToggle}
         className="w-full flex items-center justify-between px-5 py-4 rounded-[16px] transition-colors"
         style={{
           background: "#2A2A3E",
@@ -105,25 +149,7 @@ function SectorDropdown({ value, onChange, sectors }: { value: string; onChange:
         <span className="text-white font-semibold" style={{ fontSize: 15 }}>Sector: {value}</span>
         <ChevronDown size={18} color="rgba(255,255,255,0.5)" style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }} />
       </button>
-
-      {open && (
-        <div className="absolute left-0 right-0 z-50 mt-2 rounded-[16px] overflow-hidden" style={{ background: "#232336", border: "1.5px solid rgba(255,255,255,0.1)", boxShadow: "0 10px 40px rgba(0,0,0,0.5)", maxHeight: 260, overflowY: "auto" }}>
-          {options.map((opt) => (
-            <button
-              key={opt}
-              onClick={() => { onChange(opt); setOpen(false); }}
-              className="w-full flex items-center px-5 py-3.5 text-left transition-colors hover:bg-white/5 text-white"
-              style={{
-                background: opt === value ? "rgba(156,39,176,0.15)" : "transparent",
-                borderLeft: opt === value ? "3px solid #9C27B0" : "3px solid transparent",
-                fontSize: 14, fontWeight: opt === value ? 600 : 400, cursor: "pointer",
-              }}
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
+      {createPortal(dropdown, document.body)}
     </div>
   );
 }
@@ -131,26 +157,39 @@ function SectorDropdown({ value, onChange, sectors }: { value: string; onChange:
 function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: Sector[], globalStats: any }) {
   const isGlobal = filter === "Todos";
   const src = isGlobal ? sectors : sectors.filter((s) => s.name === filter);
-  
+
   const totalEmpleados = src.reduce((a, c) => a + c.employees, 0);
   const numEncargados = new Set(src.map(s => s.encargado).filter(Boolean)).size;
-  
-  // Si no estamos en "Todos", usamos lo que sabemos (empleados). Las horas/ausentes globales no aplicarían directamente.
-  const ausentes = isGlobal ? globalStats.ausentes : "N/A";
+
+  const ausentes = isGlobal ? globalStats.ausentes : "—";
   const activos = isGlobal ? Math.max(0, totalEmpleados - globalStats.ausentes) : totalEmpleados;
-  const totales = totalEmpleados + numEncargados;
-  const horasTotales = isGlobal ? globalStats.horasTotales : "N/A";
+  const horasTotales = isGlobal ? globalStats.horasTotales : null;
+  const cosechaTotales = isGlobal ? globalStats.cosechaTotales : null;
+  const importeTotales = isGlobal ? globalStats.importeTotales : null;
+
+  const fmtH = (v: number | null) => v === null ? "—" : v === 0 ? "0H" : v < 1 ? "<1H" : `${Math.round(v)}H`;
+  const fmtKg = (v: number | null) => v === null ? "—" : v === 0 ? "0" : v.toLocaleString("es", { maximumFractionDigits: 0 });
+  const fmtPesos = (v: number | null) => v === null ? "—" : v === 0 ? "$0" : "$" + v.toLocaleString("es", { maximumFractionDigits: 0 });
+
+  const stat = (label: string, value: string | number) => (
+    <div>
+      <p className="text-white/65 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 10 }}>{label}</p>
+      <p className="text-white font-black" style={{ fontSize: 22, lineHeight: 1 }}>{value}</p>
+    </div>
+  );
 
   return (
-    <div className="p-6 rounded-[16px]" style={{ background: "linear-gradient(135deg, #9C27B0 0%, #26C6DA 100%)", boxShadow: "0 12px 32px rgba(156,39,176,0.25)" }}>
-      <h2 className="text-white mb-6" style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.01em" }}>Estadísticas del Período</h2>
-      <div className="grid grid-cols-2 gap-y-6 gap-x-4">
-        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Total Registrados</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{totalEmpleados.toLocaleString("es")}</p></div>
-        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Encargados</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{numEncargados}</p></div>
-        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Activos</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{activos}</p></div>
-        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Ausentes</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{ausentes}</p></div>
-        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Totales</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{totales.toLocaleString("es")}</p></div>
-        <div><p className="text-white/70 uppercase font-semibold tracking-wider mb-1" style={{ fontSize: 11 }}>Horas Totales</p><p className="text-white font-black" style={{ fontSize: 26, lineHeight: 1 }}>{horasTotales !== "N/A" ? parseFloat(Number(horasTotales).toPrecision(4)).toLocaleString("es") : "N/A"}</p></div>
+    <div className="p-5 rounded-[16px]" style={{ background: "linear-gradient(135deg, #9C27B0 0%, #26C6DA 100%)", boxShadow: "0 12px 32px rgba(156,39,176,0.25)" }}>
+      <h2 className="text-white mb-5" style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em" }}>Estadísticas de Hoy</h2>
+      <div className="grid grid-cols-2 gap-y-5 gap-x-4">
+        {stat("Registrados", totalEmpleados.toLocaleString("es"))}
+        {stat("Encargados", numEncargados)}
+        {stat("Activos", activos.toLocaleString("es"))}
+        {stat("Ausentes", ausentes)}
+        {stat("Horas", fmtH(horasTotales))}
+        {stat("Cosecha", fmtKg(cosechaTotales))}
+        {stat("Importe", fmtPesos(importeTotales))}
+        {stat("Sectores", src.length)}
       </div>
     </div>
   );
@@ -328,6 +367,136 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
   const [periodMonth, setPeriodMonth] = useState(nowForPeriod.getMonth() + 1);
   const [periodYear, setPeriodYear] = useState(nowForPeriod.getFullYear());
 
+  // ── Rango de fechas del período 21→20 (compartido por preview y export) ────
+  const computePeriodRange = (month: number, year: number) => {
+    const fromMonth = month === 1 ? 12 : month - 1;
+    const fromYear = month === 1 ? year - 1 : year;
+    return {
+      startDate: `${fromYear}-${String(fromMonth).padStart(2, '0')}-21`,
+      endDate: `${year}-${String(month).padStart(2, '0')}-20`,
+    };
+  };
+
+  // ── Vista Previa: asistencias del período en grilla día x empleado ─────────
+  const [previewAttendances, setPreviewAttendances] = useState<any[]>([]);
+  const [previewLoading, setPreviewLoading] = useState(true);
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPreview = async () => {
+      setPreviewLoading(true);
+      try {
+        const { startDate, endDate } = computePeriodRange(periodMonth, periodYear);
+        const adminToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+        if (window.electronAPI?.getAttendances) {
+          const data = await window.electronAPI.getAttendances(sector.apiId, startDate, endDate, adminToken);
+          if (!cancelled) setPreviewAttendances(data ?? []);
+        }
+      } catch (err) {
+        console.error('[Preview] Error cargando asistencias:', err);
+        if (!cancelled) setPreviewAttendances([]);
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    };
+    loadPreview();
+    return () => { cancelled = true; };
+  }, [sector.apiId, periodMonth, periodYear]);
+
+  // Días del período, en orden — genera columnas de la grilla
+  const previewDays = (() => {
+    const { startDate, endDate } = computePeriodRange(periodMonth, periodYear);
+    const days: string[] = [];
+    const d = new Date(startDate + "T00:00:00");
+    const endD = new Date(endDate + "T00:00:00");
+    while (d <= endD) {
+      days.push(d.toISOString().slice(0, 10));
+      d.setDate(d.getDate() + 1);
+    }
+    return days;
+  })();
+
+  const MESES_CORTOS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const dayLabel = (iso: string) => {
+    const d = new Date(iso + "T00:00:00");
+    return `${d.getDate()} ${MESES_CORTOS[d.getMonth()]}`;
+  };
+
+  // employee_id -> date -> registro de asistencia
+  const previewMap = (() => {
+    const map: Record<string, Record<string, any>> = {};
+    for (const a of previewAttendances) {
+      if (!a.employee_id || !a.date) continue;
+      const dateKey = String(a.date).slice(0, 10);
+      if (!map[a.employee_id]) map[a.employee_id] = {};
+      map[a.employee_id][dateKey] = a;
+    }
+    return map;
+  })();
+
+  // Determina color + texto de una celda día según el valor registrado.
+  // La cosecha es un número plano (cantidad de tarjas/unidades), no kg — se muestra "C {numero}".
+  const renderDayCell = (rec: any) => {
+    if (!rec) return { bg: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.2)", text: "—" };
+    const workValue: string = rec.work_value != null ? String(rec.work_value) : "";
+    if (workValue.includes('|')) {
+      const [, tipo] = workValue.split('|');
+      if (tipo?.startsWith('C:')) {
+        const num = parseFloat(tipo.slice(2).replace(',', '.'));
+        return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: `C ${!isNaN(num) ? num : ''}`.trim() };
+      }
+      if (tipo?.startsWith('AB:')) {
+        const num = parseFloat(tipo.slice(3).replace(',', '.'));
+        return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: `$ ${!isNaN(num) ? num.toLocaleString('es') : ''}`.trim() };
+      }
+      return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: "•" };
+    }
+    if (workValue === 'C') return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: "C" };
+    if (workValue.startsWith('$')) {
+      const num = parseFloat(workValue.slice(1).replace(',', '.'));
+      return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: `$ ${!isNaN(num) ? num.toLocaleString('es') : ''}`.trim() };
+    }
+    const hours = rec.hours;
+    if (hours === null || hours === undefined || hours === 0) {
+      return { bg: "rgba(239,83,80,0.55)", color: "#fff", text: "0" };
+    }
+    if (hours >= 7) return { bg: "rgba(76,175,80,0.55)", color: "#fff", text: String(Math.round(hours)) };
+    return { bg: "rgba(255,193,7,0.55)", color: "#1E1E2E", text: String(Math.round(hours * 10) / 10) };
+  };
+
+  // Total del período por empleado — cuenta horas + cosecha (número plano, sin unidad) + importe ($), no solo horas.
+  // Mismo criterio que exportExcel.ts para que el total coincida con el del Excel.
+  const computeEmployeeTotal = (empMap: Record<string, any>) => {
+    let horas = 0, kg = 0, importe = 0;
+    for (const rec of Object.values(empMap)) {
+      const workValue: string = rec.work_value != null ? String(rec.work_value) : "";
+      if (workValue.includes('|')) {
+        const [hrsPart, tipo] = workValue.split('|');
+        const h = parseFloat(hrsPart);
+        if (!isNaN(h) && h > 0) horas += h;
+        if (tipo?.startsWith('C:')) {
+          const v = parseFloat(tipo.slice(2).replace(',', '.'));
+          if (!isNaN(v)) kg += v;
+        } else if (tipo?.startsWith('AB:')) {
+          const v = parseFloat(tipo.slice(3).replace(',', '.'));
+          if (!isNaN(v)) importe += v;
+        }
+      } else if (workValue.startsWith('$')) {
+        const v = parseFloat(workValue.slice(1).replace(',', '.'));
+        if (!isNaN(v)) importe += v;
+      } else {
+        const num = parseFloat(workValue);
+        if (!isNaN(num)) horas += num;
+      }
+    }
+    const partes: string[] = [];
+    if (horas > 0) partes.push(`${horas}H`);
+    if (kg > 0) partes.push(`C:${kg}`);
+    if (importe > 0) partes.push(`$${importe.toLocaleString('es')}`);
+    return partes.length > 0 ? partes.join(' | ') : '—';
+  };
+
   // ── Export handler: fetches real attendances then generates Excel ──────────
   // Período 21→20: e.g. Marzo 2026 = 2026-02-21 to 2026-03-20
   const handleExport = async () => {
@@ -335,10 +504,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     setExporting(true);
     try {
       // 1. Período 21→20
-      const fromMonth = periodMonth === 1 ? 12 : periodMonth - 1;
-      const fromYear = periodMonth === 1 ? periodYear - 1 : periodYear;
-      const startDate = `${fromYear}-${String(fromMonth).padStart(2, '0')}-21`;
-      const endDate = `${periodYear}-${String(periodMonth).padStart(2, '0')}-20`;
+      const { startDate, endDate } = computePeriodRange(periodMonth, periodYear);
 
       const adminToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
 
@@ -489,13 +655,14 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
         background: "#2A2A3E",
         border: "1.5px solid rgba(255,255,255,0.1)",
         boxShadow: "0 32px 80px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.04)",
-        width: 340,
+        width: "min(1140px, 94vw)",
+        maxHeight: "90vh",
       }}
       onClick={(e) => e.stopPropagation()}
     >
-      <div style={{ height: 4, background: "linear-gradient(90deg, #9C27B0, #26C6DA)" }} />
-      <div className="p-7">
-        <div className="flex items-start justify-between mb-5">
+      <div style={{ height: 4, background: "linear-gradient(90deg, #9C27B0, #26C6DA)", flexShrink: 0 }} />
+      <div className="p-7 flex flex-col" style={{ minHeight: 0, overflow: "hidden" }}>
+        <div className="flex items-start justify-between mb-5" style={{ flexShrink: 0 }}>
           <div>
             <h3 className="text-white" style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.01em" }}>{sector.name}</h3>
             <div className="flex items-center gap-2 mt-2.5">
@@ -541,11 +708,11 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
           </div>
         </div>
 
-        {/* Stats counters — driven by real employee data once API endpoint is live */}
-        <div className="grid grid-cols-3 gap-2.5 mb-5">
+        {/* Stats counters */}
+        <div className="grid grid-cols-3 gap-2.5 mb-5" style={{ flexShrink: 0 }}>
           {[
             {
-              l: "Registros",
+              l: "Registrados",
               v: empLoading ? "—" : employees.length.toLocaleString(),
               sub: "total"
             },
@@ -555,9 +722,9 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
               sub: "en nómina"
             },
             {
-              l: "Horas",
-              v: "—",   // from /api/attendances — endpoint pending
-              sub: "asistencia"
+              l: "Totales",
+              v: previewLoading ? "—" : previewAttendances.length.toLocaleString(),
+              sub: "asistencias"
             },
           ].map((s) => (
             <div key={s.l} className="rounded-2xl px-3.5 py-3" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}>
@@ -568,9 +735,9 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
           ))}
         </div>
 
-        {/* Employee List — fetched via useEffect on sector.apiId */}
-        <div className="mb-5">
-          <div className="flex items-center justify-between mb-3">
+        {/* Vista Previa — grilla de asistencias día x empleado */}
+        <div className="flex flex-col" style={{ flex: 1, minHeight: 0 }}>
+          <div className="flex items-center justify-between mb-3" style={{ flexShrink: 0 }}>
             <p className="text-white/40 font-semibold uppercase tracking-wider" style={{ fontSize: 10 }}>Empleados del Sector</p>
             {absenceLoading && (
               <div className="flex items-center gap-1.5">
@@ -584,11 +751,11 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
               </span>
             )}
           </div>
-          
-          <div className="mb-3 px-3 py-1.5 rounded-xl flex items-center gap-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+
+          <div className="mb-3 px-3 py-1.5 rounded-xl flex items-center gap-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
             <Search size={12} color="rgba(255,255,255,0.4)" />
-            <input 
-              placeholder="Buscar empleado..." 
+            <input
+              placeholder="Buscar empleado..."
               value={localSearch}
               onChange={e => setLocalSearch(e.target.value)}
               className="bg-transparent outline-none w-full text-white placeholder-white/30"
@@ -606,130 +773,180 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
               <p className="text-white/25" style={{ fontSize: 12 }}>Sin empleados en este sector</p>
             </div>
           ) : (
-            <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
-              {employees.filter(emp => emp.is_active && `${emp.first_name || ''} ${emp.last_name || ''} ${emp.dni || ''}`.toLowerCase().includes(localSearch.toLowerCase())).map((emp) => {
-                const isAbsent = absentEmployeeIds.has(emp.id);
-                return (
-                  <div
-                    key={emp.id}
-                    className="flex items-center justify-between rounded-xl px-3.5 py-2.5 transition-colors"
-                    style={{
-                      background: isAbsent ? "rgba(255,82,82,0.12)" : "rgba(255,255,255,0.04)",
-                      border: isAbsent ? "1px solid rgba(255,82,82,0.4)" : "1px solid rgba(255,255,255,0.06)",
-                    }}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <div
-                        className="flex items-center justify-center rounded-full flex-shrink-0"
-                        style={{
-                          width: 28, height: 28,
-                          background: isAbsent ? "rgba(255,82,82,0.2)" : "rgba(156,39,176,0.18)",
-                          color: isAbsent ? "#FF5252" : "#C86FE8",
-                          fontSize: 11, fontWeight: 700
+            <div
+              className="sa-table-scroll rounded-xl"
+              style={{ flex: 1, minHeight: 0, overflow: "auto", border: "1px solid rgba(255,255,255,0.08)", background: "#26263A" }}
+            >
+              <table style={{ borderCollapse: "separate", borderSpacing: 0, width: "max-content", minWidth: "100%" }}>
+                <thead>
+                  <tr>
+                    <th style={{ position: "sticky", left: 0, top: 0, zIndex: 3, width: 32, height: 32, background: "#1F1F30", borderBottom: "1px solid rgba(255,255,255,0.08)", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedRows.size > 0 && employees.filter(e => e.is_active).every(e => selectedRows.has(e.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedRows(new Set(employees.filter(emp => emp.is_active).map(emp => emp.id)));
+                          else setSelectedRows(new Set());
                         }}
-                      >
-                        {emp.first_name.charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <p style={{ fontSize: 12, fontWeight: 600, color: isAbsent ? "#ffaaaa" : "white" }}>
-                          {emp.first_name} {emp.last_name}
-                        </p>
-                        {emp.dni && <p style={{ fontSize: 10, color: isAbsent ? "rgba(255,150,150,0.5)" : "rgba(255,255,255,0.35)" }}>DNI: {emp.dni}</p>}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                          <div style={{
-                            width: 6, height: 6, borderRadius: '50%',
-                            background: emp.tiene_foto_frente && emp.tiene_foto_dorso ? '#4CAF50' : emp.tiene_foto_frente || emp.tiene_foto_dorso ? '#FF9800' : '#EF5350',
-                            flexShrink: 0
-                          }} />
-                          <span style={{ fontSize: 9, color: emp.tiene_foto_frente && emp.tiene_foto_dorso ? '#4CAF50' : emp.tiene_foto_frente || emp.tiene_foto_dorso ? '#FF9800' : '#EF5350', fontWeight: 600 }}>
-                            {emp.tiene_foto_frente && emp.tiene_foto_dorso ? 'DNI completo' : emp.tiene_foto_frente || emp.tiene_foto_dorso ? 'DNI parcial' : 'Sin foto DNI'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {isAbsent && (
-                        <span
-                          className="px-2 py-0.5 rounded-full flex items-center gap-1"
-                          style={{ fontSize: 10, fontWeight: 700, background: "rgba(255,82,82,0.25)", color: "#FF5252", border: "1px solid rgba(255,82,82,0.4)", letterSpacing: "0.04em" }}
-                        >
-                          <AlertCircle size={9} />
-                          AUSENTE
-                        </span>
-                      )}
-                      {!isAbsent && (
-                        emp.is_active ? (
-                          <span className="px-2 py-0.5 rounded-full" style={{ fontSize: 10, fontWeight: 600, background: "rgba(76,175,80,0.15)", color: "#4CAF50" }}>
-                            Activo
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full" style={{ fontSize: 10, fontWeight: 600, background: "rgba(255,82,82,0.15)", color: "#FF5252" }}>
-                            Inactivo
-                          </span>
-                        )
-                      )}
-                      {(emp.tiene_foto_frente || emp.tiene_foto_dorso) && (
-                        <button
-                          onClick={() => openViewFoto(emp)}
-                          title="Ver fotos DNI"
-                          className="p-1.5 rounded-lg transition-colors"
-                          style={{ cursor: "pointer", color: "#26C6DA", background: "rgba(38,198,218,0.1)", border: "1px solid rgba(38,198,218,0.25)" }}
-                        >
-                          <Eye size={13} />
-                        </button>
-                      )}
-                      {isAdmin && (
-                        <button
-                          onClick={() => openEditDialog(emp)}
-                          title="Editar empleado"
-                          className="p-1.5 rounded-lg transition-colors"
-                          style={{ cursor: "pointer", color: "#C86FE8", background: "rgba(156,39,176,0.12)", border: "1px solid rgba(156,39,176,0.25)" }}
-                        >
-                          <UserCog size={13} />
-                        </button>
-                      )}
-                      {isAdmin && onDeleteEmployee && (
-                        <button
-                          onClick={() => {
-                            setShowConfirmDelete({
-                              type: 'employee',
-                              id: emp.id,
-                              name: `${emp.first_name} ${emp.last_name}`,
-                              onConfirm: async () => {
-                                if (onDeleteEmployee) {
-                                  const ok = await onDeleteEmployee(emp.id);
-                                  if (ok) setEmployees(prev => prev.filter(e => e.id !== emp.id));
-                                }
-                              }
-                            });
-                          }}
-                          className="p-1.5 rounded-lg hover:bg-red-500/20 transition-colors"
-                          style={{ cursor: "pointer", color: "#FF5252" }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                        style={{ cursor: "pointer" }}
+                      />
+                    </th>
+                    <th style={{ position: "sticky", left: 32, top: 0, zIndex: 3, width: 170, height: 32, background: "#1F1F30", borderBottom: "1px solid rgba(255,255,255,0.08)", borderRight: "1px solid rgba(255,255,255,0.06)", padding: "0 10px", textAlign: "left" }}>
+                      <span style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", fontWeight: 700, letterSpacing: "0.06em" }}>EMPLEADO</span>
+                    </th>
+                    <th style={{ position: "sticky", left: 202, top: 0, zIndex: 3, width: 110, height: 32, background: "#1F1F30", borderBottom: "1px solid rgba(255,255,255,0.08)", borderRight: "1px solid rgba(255,255,255,0.06)", padding: "0 10px", textAlign: "left" }}>
+                      <span style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", fontWeight: 700, letterSpacing: "0.06em" }}>DNI</span>
+                    </th>
+                    <th style={{ position: "sticky", left: 312, top: 0, zIndex: 3, width: 118, height: 32, background: "#1F1F30", borderBottom: "1px solid rgba(255,255,255,0.08)", borderRight: "1px solid rgba(255,255,255,0.06)", padding: "0 10px", textAlign: "left" }}>
+                      <span style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", fontWeight: 700, letterSpacing: "0.06em" }}>ESTADO</span>
+                    </th>
+                    <th style={{ position: "sticky", left: 430, top: 0, zIndex: 3, width: 140, height: 32, background: "#1F1F30", borderBottom: "1px solid rgba(255,255,255,0.08)", borderRight: "1px solid rgba(255,255,255,0.15)", padding: "0 10px", textAlign: "left" }}>
+                      <span style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", fontWeight: 700, letterSpacing: "0.06em" }}>TOTAL</span>
+                    </th>
+                    {previewDays.map((day) => (
+                      <th key={day} style={{ position: "sticky", top: 0, zIndex: 2, width: 52, height: 32, background: "#1F1F30", borderBottom: "1px solid rgba(255,255,255,0.08)", padding: "0 2px", textAlign: "center" }}>
+                        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", fontWeight: 600 }}>{dayLabel(day)}</span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {employees
+                    .filter(emp => emp.is_active && `${emp.first_name || ''} ${emp.last_name || ''} ${emp.dni || ''}`.toLowerCase().includes(localSearch.toLowerCase()))
+                    .map((emp, idx) => {
+                      const isAbsent = absentEmployeeIds.has(emp.id);
+                      const rowBg = idx % 2 === 0 ? "#26263A" : "#2B2B40";
+                      const empMap = previewMap[emp.id] || {};
+                      const isSelected = selectedRows.has(emp.id);
+                      return (
+                        <tr key={emp.id}>
+                          <td style={{ position: "sticky", left: 0, zIndex: 1, width: 32, background: rowBg, borderRight: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "center" }}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => {
+                                setSelectedRows(prev => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(emp.id); else next.delete(emp.id);
+                                  return next;
+                                });
+                              }}
+                              style={{ cursor: "pointer" }}
+                            />
+                          </td>
+                          <td style={{ position: "sticky", left: 32, zIndex: 1, width: 170, background: rowBg, borderRight: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.05)", padding: "8px 10px" }}>
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="flex items-center justify-center rounded-full flex-shrink-0"
+                                style={{ width: 24, height: 24, background: isAbsent ? "rgba(255,82,82,0.2)" : "rgba(156,39,176,0.18)", color: isAbsent ? "#FF5252" : "#C86FE8", fontSize: 10, fontWeight: 700 }}
+                              >
+                                {emp.first_name.charAt(0).toUpperCase()}
+                              </div>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: isAbsent ? "#ffaaaa" : "white", whiteSpace: "nowrap" }}>
+                                {emp.first_name} {emp.last_name}
+                              </span>
+                            </div>
+                          </td>
+                          <td style={{ position: "sticky", left: 202, zIndex: 1, width: 110, background: rowBg, borderRight: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.05)", padding: "8px 10px" }}>
+                            <p style={{ fontSize: 10, color: "rgba(255,255,255,0.6)" }}>{emp.dni ? `DNI: ${emp.dni}` : "Sin DNI"}</p>
+                            <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
+                              <div style={{
+                                width: 5, height: 5, borderRadius: "50%",
+                                background: emp.tiene_foto_frente && emp.tiene_foto_dorso ? '#4CAF50' : emp.tiene_foto_frente || emp.tiene_foto_dorso ? '#FF9800' : '#EF5350',
+                                flexShrink: 0
+                              }} />
+                              <span style={{ fontSize: 8, color: emp.tiene_foto_frente && emp.tiene_foto_dorso ? '#4CAF50' : emp.tiene_foto_frente || emp.tiene_foto_dorso ? '#FF9800' : '#EF5350', fontWeight: 600 }}>
+                                {emp.tiene_foto_frente && emp.tiene_foto_dorso ? 'DNI completo' : emp.tiene_foto_frente || emp.tiene_foto_dorso ? 'DNI parcial' : 'Sin foto DNI'}
+                              </span>
+                            </div>
+                          </td>
+                          <td style={{ position: "sticky", left: 312, zIndex: 1, width: 118, background: rowBg, borderRight: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.05)", padding: "8px 8px" }}>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {isAbsent ? (
+                                <span className="px-1.5 py-0.5 rounded-full" style={{ fontSize: 9, fontWeight: 700, background: "rgba(255,82,82,0.25)", color: "#FF5252" }}>Ausente</span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded-full" style={{ fontSize: 9, fontWeight: 600, background: "rgba(76,175,80,0.15)", color: "#4CAF50" }}>Activo</span>
+                              )}
+                              {(emp.tiene_foto_frente || emp.tiene_foto_dorso) && (
+                                <button
+                                  onClick={() => openViewFoto(emp)}
+                                  title="Ver fotos DNI"
+                                  className="p-1 rounded-lg transition-colors"
+                                  style={{ cursor: "pointer", color: "#26C6DA", background: "rgba(38,198,218,0.1)", border: "1px solid rgba(38,198,218,0.25)" }}
+                                >
+                                  <Eye size={11} />
+                                </button>
+                              )}
+                              {isAdmin && (
+                                <button
+                                  onClick={() => openEditDialog(emp)}
+                                  title="Editar empleado"
+                                  className="p-1 rounded-lg transition-colors"
+                                  style={{ cursor: "pointer", color: "#C86FE8", background: "rgba(156,39,176,0.12)", border: "1px solid rgba(156,39,176,0.25)" }}
+                                >
+                                  <UserCog size={11} />
+                                </button>
+                              )}
+                              {isAdmin && onDeleteEmployee && (
+                                <button
+                                  onClick={() => {
+                                    setShowConfirmDelete({
+                                      type: 'employee',
+                                      id: emp.id,
+                                      name: `${emp.first_name} ${emp.last_name}`,
+                                      onConfirm: async () => {
+                                        if (onDeleteEmployee) {
+                                          const ok = await onDeleteEmployee(emp.id);
+                                          if (ok) setEmployees(prev => prev.filter(e => e.id !== emp.id));
+                                        }
+                                      }
+                                    });
+                                  }}
+                                  className="p-1 rounded-lg hover:bg-red-500/20 transition-colors"
+                                  style={{ cursor: "pointer", color: "#FF5252" }}
+                                >
+                                  <Trash2 size={11} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          <td style={{ position: "sticky", left: 430, zIndex: 1, width: 140, background: rowBg, borderRight: "1px solid rgba(255,255,255,0.15)", borderBottom: "1px solid rgba(255,255,255,0.05)", padding: "8px 10px" }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: "white", whiteSpace: "nowrap" }}>
+                              {previewLoading ? "—" : computeEmployeeTotal(empMap)}
+                            </span>
+                          </td>
+                          {previewDays.map((day) => {
+                            const cell = renderDayCell(empMap[day]);
+                            return (
+                              <td key={day} style={{ width: 52, background: rowBg, borderBottom: "1px solid rgba(255,255,255,0.05)", padding: 3, textAlign: "center" }}>
+                                <div style={{ background: cell.bg, color: cell.color, borderRadius: 6, padding: "4px 0", fontSize: 10, fontWeight: 700 }}>
+                                  {previewLoading ? "" : cell.text}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
 
-        <div style={{ height: 1, background: "rgba(255,255,255,0.07)", marginBottom: 20 }} />
+        <div style={{ height: 1, background: "rgba(255,255,255,0.07)", marginBottom: 20, marginTop: 20, flexShrink: 0 }} />
 
         {isAdmin && (
           <button
             onClick={onCreateEmployee}
             className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl transition-all hover:bg-white/10 mb-5"
-            style={{ background: "rgba(156,39,176,0.15)", border: "1px dashed rgba(156,39,176,0.4)", cursor: "pointer", color: "#C86FE8", fontSize: 13, fontWeight: 700 }}
+            style={{ background: "rgba(156,39,176,0.15)", border: "1px dashed rgba(156,39,176,0.4)", cursor: "pointer", color: "#C86FE8", fontSize: 13, fontWeight: 700, flexShrink: 0 }}
           >
             + Agregar Empleado a este Sector
           </button>
         )}
 
-        <div className="flex flex-col gap-3 relative">
+        <div className="flex flex-col gap-3 relative" style={{ flexShrink: 0 }}>
 
           {/* Tooltip implementation */}
           {isMissing && showTooltip && (
@@ -1413,7 +1630,7 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null); // visible error feedback
   
   const [searchQuery, setSearchQuery] = useState("");
-  const [globalStats, setGlobalStats] = useState({ ausentes: 0, horasTotales: 0 });
+  const [globalStats, setGlobalStats] = useState({ ausentes: 0, horasTotales: 0, cosechaTotales: 0, importeTotales: 0 });
 
   // Global Employee Search — llama al endpoint /api/admin/employees/search
   const [employeeSearchResults, setEmployeeSearchResults] = useState<{ emp: Employee; sector: Sector }[]>([]);
@@ -1703,9 +1920,11 @@ export default function App() {
       console.log("[Stats] Ausentes found:", ausentesCount);
 
       let totalH = 0;
+      let totalCosecha = 0;
+      let totalImporte = 0;
       if (sectors && sectors.length > 0) {
-          const hoursArray = await Promise.all(sectors.map(async (sec) => {
-              let sectorH = 0;
+          const results = await Promise.all(sectors.map(async (sec) => {
+              let sH = 0, sC = 0, sI = 0;
               const url = `https://staffaxis-new-version-production.up.railway.app/api/admin/report?sector_id=${encodeURIComponent(sec.apiId)}&start_date=${todayStr}&end_date=${todayStr}`;
               try {
                   const res = await fetch(url, { headers });
@@ -1713,26 +1932,47 @@ export default function App() {
                       const data = await res.json();
                       if (data.rows && Array.isArray(data.rows)) {
                           for (const att of data.rows) {
-                               if (att.date === todayStr) {
-                                   const val = String(att.minutes_worked || "");
-                                   if (val && val !== "null") {
-                                       const num = Number(val);
-                                       if (!isNaN(num) && num > 0) sectorH += (num / 60);
-                                   }
-                               }
+                              // La API ya filtra por start_date/end_date, no hace falta revalidar la fecha
+                              const val = String(att.minutes_worked ?? "").trim();
+                              if (!val || val === "null") continue;
+                              // Formato compuesto: "4|C:33" o "0|AB:47573,53"
+                              if (val.includes('|')) {
+                                  const [hrsPart, typePart] = val.split('|');
+                                  const hrs = parseFloat(hrsPart);
+                                  if (!isNaN(hrs) && hrs > 0) sH += hrs;
+                                  if (typePart?.startsWith('C:')) {
+                                      const kg = parseFloat(typePart.slice(2).replace(',', '.'));
+                                      if (!isNaN(kg)) sC += kg;
+                                  } else if (typePart?.startsWith('AB:')) {
+                                      const imp = parseFloat(typePart.slice(3).replace(',', '.'));
+                                      if (!isNaN(imp)) sI += imp;
+                                  }
+                              } else if (val === 'C') {
+                                  // cosecha sin cantidad
+                                  sC += 1;
+                              } else if (val.startsWith('$')) {
+                                  const imp = parseFloat(val.slice(1).replace(',', '.'));
+                                  if (!isNaN(imp)) sI += imp;
+                              } else {
+                                  const num = parseFloat(val);
+                                  if (!isNaN(num) && num > 0) {
+                                      // < 60 → ya está en horas (legacy); >= 60 → minutos
+                                      sH += num < 60 ? num : num / 60;
+                                  }
+                              }
                           }
                       }
                   }
               } catch(err) {
                   console.error("[Stats] Error for sector", sec.name, err);
               }
-              return sectorH;
+              return { sH, sC, sI };
           }));
-          totalH = hoursArray.reduce((acc, curr) => acc + curr, 0);
+          for (const r of results) { totalH += r.sH; totalCosecha += r.sC; totalImporte += r.sI; }
       }
 
-      console.log("[Stats] Total Horas calculated:", totalH);
-      setGlobalStats({ ausentes: ausentesCount, horasTotales: totalH });
+      console.log("[Stats] Horas:", totalH, "Cosecha:", totalCosecha, "Importe:", totalImporte);
+      setGlobalStats({ ausentes: ausentesCount, horasTotales: totalH, cosechaTotales: totalCosecha, importeTotales: totalImporte });
     } catch (e) {
       console.error("[Stats] Critical error:", e);
     }
@@ -1926,18 +2166,29 @@ export default function App() {
   const hasMissing = sectors.some((s) => s.state === "missing");
 
   return (
-    <div className="relative min-h-screen w-full" style={{ background: "#1E1E2E", fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div className="relative h-screen w-full overflow-hidden" style={{ background: "#1E1E2E", fontFamily: "'Inter', system-ui, sans-serif" }}>
+      {/* Scroll funcional pero sin barra visible */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        .sa-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+        .sa-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
+        .sa-table-scroll { scrollbar-width: thin; scrollbar-color: rgba(156,39,176,0.4) transparent; }
+        .sa-table-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+        .sa-table-scroll::-webkit-scrollbar-track { background: transparent; }
+        .sa-table-scroll::-webkit-scrollbar-thumb { background: rgba(156,39,176,0.4); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+        .sa-table-scroll::-webkit-scrollbar-thumb:hover { background: rgba(156,39,176,0.65); background-clip: padding-box; }
+        .sa-table-scroll::-webkit-scrollbar-corner { background: transparent; }
+      ` }} />
 
       {/* Absolute Box logic wrapper */}
       <div
-        className="min-h-screen w-full flex flex-col transition-all duration-300"
+        className="h-screen w-full flex flex-col transition-all duration-300"
         style={{
           filter: !isLoggedIn ? "blur(16px)" : "none",
           pointerEvents: !isLoggedIn ? "none" : "auto"
         }}
       >
-        {/* HEADER */}
-        <header className="flex items-center justify-between px-10 py-5 sticky top-0 z-10" style={{ background: "rgba(30,30,46,0.95)", backdropFilter: "blur(12px)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+        {/* HEADER — fijo, nunca scrollea */}
+        <header className="flex items-center justify-between px-10 py-5 z-30" style={{ flexShrink: 0, background: "#1E1E2E", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center rounded-xl overflow-hidden" style={{ width: 42, height: 42, background: "rgba(255,255,255,0.05)" }}>
               <img src="./logo_staffaxis.png" alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
@@ -2079,11 +2330,11 @@ export default function App() {
           </div>
         </header>
 
-        {/* DASHBOARD ROW (2-Column Layout) */}
-        <div className="flex-1 flex px-10 py-8 gap-8 mx-auto w-full" style={{ maxWidth: 1600 }}>
+        {/* DASHBOARD ROW (2-Column Layout) — min-h-0 permite que los hijos scrolleen */}
+        <div className="flex-1 flex px-10 pt-8 gap-8 mx-auto w-full" style={{ maxWidth: 1600, minHeight: 0 }}>
 
-          {/* LEFT COLUMN (SIDEBAR) */}
-          <div className="flex flex-col gap-6" style={{ width: 320, flexShrink: 0 }}>
+          {/* LEFT COLUMN (SIDEBAR) — fija, con scroll propio si no entra */}
+          <div className="sa-scroll flex flex-col gap-6 pb-8" style={{ width: 320, flexShrink: 0, overflowY: "auto", minHeight: 0 }}>
             <SectorDropdown value={filter} onChange={setFilter} sectors={sectors} />
             <StatsCard filter={filter} sectors={sectors} globalStats={globalStats} />
             <div className="flex flex-col gap-3 mt-1 px-2">
@@ -2099,9 +2350,9 @@ export default function App() {
           </div>
 
           {/* RIGHT COLUMN — API data with loading state + manual refresh */}
-          <div className="flex-1 flex flex-col">
-            {/* Header row: Panel tabs + contextual actions */}
-            <div className="flex items-center justify-between mb-6">
+          <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
+            {/* Header row: Panel tabs + contextual actions — fija */}
+            <div className="flex items-center justify-between" style={{ flexShrink: 0 }}>
               {/* Tab navigation */}
               <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.08)" }}>
                 <button
@@ -2145,6 +2396,8 @@ export default function App() {
                 </div>
               )}
             </div>
+            {/* ÚNICA zona con scroll de todo el dashboard */}
+            <div className="sa-scroll flex-1 overflow-y-auto pt-6 pb-8" style={{ minHeight: 0 }}>
             {activePanel === 'informes' ? (
               <PanelInformes apiSectors={sectors} />
             ) : isLoading ? (
@@ -2192,6 +2445,7 @@ export default function App() {
                 ))}
               </div>
             )}
+            </div>
           </div>
 
         </div>

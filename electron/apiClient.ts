@@ -414,13 +414,20 @@ export async function fetchAttendances(
         const attendances: ApiAttendance[] = Array.isArray(data.rows)
             ? data.rows.map((r: any) => {
                 const raw = r.minutes_worked;
+                const rawStr = raw != null ? String(raw) : '';
                 const num = raw != null ? Number(raw) : NaN;
                 // Old migrated data: stored as hours (8, 12, etc. < 60)
                 // New submissions: stored as minutes (480, 720, etc. >= 60)
                 // Non-numeric values (e.g. "C", "$36400"): pass through as-is
+                // Compound format: "4|C:33", "0|AB:47573,53" → {horas}|{tipo}:{valor}
                 let hoursVal: string | null;
                 let hoursNum: number | null;
-                if (!isNaN(num) && num > 0) {
+                if (rawStr.includes('|')) {
+                    // Formato compuesto — extraer la parte de horas del prefijo
+                    const hrsPart = parseFloat(rawStr.split('|')[0]);
+                    hoursVal = rawStr;
+                    hoursNum = isNaN(hrsPart) ? null : hrsPart;
+                } else if (!isNaN(num) && num > 0) {
                     const h = num < 60 ? num : num / 60;
                     hoursVal = String(h);
                     hoursNum = h;
