@@ -146,6 +146,8 @@ export async function exportExcel(
             let totalHorasEmpleado = 0;
             let totalCosechaEmpleado = 0;
             let totalImporteEmpleado = 0;
+            let totalCajasEmpleado = 0;
+            let totalCajonesEmpleado = 0;
             const empAtts = attendances.filter(a => String(a.employee_id) === String(emp.id) || (emp.dni && a.dni === emp.dni));
             const empAbsences = absencesByEmp.get(emp.id) ?? [];
 
@@ -163,25 +165,45 @@ export async function exportExcel(
                     if (att.status === 'Faltante') {
                         return 'AUSENTE';
                     } else {
-                        // work_value puede ser '8H', 'C', '$500', '4|C:33', '0|AB:47573,53', etc.
+                        // work_value puede ser 'H 8', 'C', '$500', 'H 4|C:33', 'H 0|AB:47573,53',
+                        // 'H 4|Cajas 32 Cajones 43', etc. Las horas llevan prefijo "H " desde la app.
                         const rawVal = att.work_value ?? att.hours ?? '';
                         const valStr = String(rawVal).trim();
                         if (valStr === '' || valStr === 'null') return '';
 
-                        // Formato compuesto: "{horas}|C:{numero}" o "{horas}|AB:{importe}"
+                        const parseHorasSegment = (seg: string): number => {
+                            const s = seg.startsWith('H ') ? seg.slice(2) : seg;
+                            const n = parseFloat(s);
+                            return isNaN(n) ? 0 : n;
+                        };
+
+                        // Formato compuesto: primer segmento son las horas, el resto son tipos ("C:", "AB:", "Cajas ", "Cajones ")
                         if (valStr.includes('|')) {
-                            const [hrsPart, rest] = valStr.split('|');
-                            const hrsNum = parseFloat(hrsPart);
-                            if (!isNaN(hrsNum) && hrsNum > 0) totalHorasEmpleado += hrsNum;
-                            // Acumular cosecha o importe en el total del empleado
-                            if (rest?.startsWith('C:')) {
-                                const kg = parseFloat(rest.slice(2).replace(',', '.'));
-                                if (!isNaN(kg)) totalCosechaEmpleado += kg;
-                            } else if (rest?.startsWith('AB:')) {
-                                const imp = parseFloat(rest.slice(3).replace(',', '.'));
-                                if (!isNaN(imp)) totalImporteEmpleado += imp;
+                            const segs = valStr.split('|');
+                            const hrsNum = parseHorasSegment(segs[0]);
+                            if (hrsNum > 0) totalHorasEmpleado += hrsNum;
+
+                            for (const seg of segs.slice(1)) {
+                                if (seg.startsWith('C:')) {
+                                    const kg = parseFloat(seg.slice(2).replace(',', '.'));
+                                    if (!isNaN(kg)) totalCosechaEmpleado += kg;
+                                } else if (seg.startsWith('AB:')) {
+                                    const imp = parseFloat(seg.slice(3).replace(',', '.'));
+                                    if (!isNaN(imp)) totalImporteEmpleado += imp;
+                                } else if (seg.startsWith('Cajas ') || seg.startsWith('Cajones ')) {
+                                    const cajasM = seg.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/);
+                                    const cajonesM = seg.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/);
+                                    if (cajasM) {
+                                        const v = parseFloat(cajasM[1].replace(',', '.'));
+                                        if (!isNaN(v)) totalCajasEmpleado += v;
+                                    }
+                                    if (cajonesM) {
+                                        const v = parseFloat(cajonesM[1].replace(',', '.'));
+                                        if (!isNaN(v)) totalCajonesEmpleado += v;
+                                    }
+                                }
                             }
-                            return `${hrsNum > 0 ? hrsNum + 'H' : '0H'}|${rest}`;
+                            return `${hrsNum > 0 ? hrsNum + 'H' : '0H'}|${segs.slice(1).join('|')}`;
                         }
 
                         // Valor standalone '$36400' → importe
@@ -191,6 +213,20 @@ export async function exportExcel(
                             return valStr;
                         }
 
+                        // "H 4" (formato nuevo, sin tipos especiales)
+                        if (valStr.startsWith('H ')) {
+                            const numericVal = parseHorasSegment(valStr);
+                            if (numericVal > 0) {
+                                totalHorasEmpleado += numericVal;
+                                if (att.record_sector_name && att.record_sector_name !== params?.sectorName) {
+                                    const currentSum = foreignSectorsMap.get(att.record_sector_name) ?? 0;
+                                    foreignSectorsMap.set(att.record_sector_name, currentSum + numericVal);
+                                }
+                            }
+                            return `${numericVal}H`;
+                        }
+
+                        // Número plano sin prefijo — datos viejos (compatibilidad)
                         const numericVal = parseFloat(valStr);
                         if (!isNaN(numericVal)) {
                             totalHorasEmpleado += numericVal;
@@ -214,6 +250,13 @@ export async function exportExcel(
             const partesTotalEmp: string[] = [];
             if (totalHorasEmpleado > 0) partesTotalEmp.push(`${totalHorasEmpleado}H`);
             if (totalCosechaEmpleado > 0) partesTotalEmp.push(`C:${totalCosechaEmpleado}`);
+            if (totalCajasEmpleado > 0 || totalCajonesEmpleado > 0) {
+                const cajasCajonesTotal = [
+                    totalCajasEmpleado > 0 ? `Cajas ${totalCajasEmpleado}` : '',
+                    totalCajonesEmpleado > 0 ? `Cajones ${totalCajonesEmpleado}` : '',
+                ].filter(Boolean).join(' ');
+                partesTotalEmp.push(cajasCajonesTotal);
+            }
             if (totalImporteEmpleado > 0) partesTotalEmp.push(`$${totalImporteEmpleado.toLocaleString('es')}`);
             const totalCellEmp = partesTotalEmp.length > 0 ? partesTotalEmp.join(' | ') : 0;
 
@@ -279,6 +322,13 @@ export async function exportExcel(
             let totalHorasOrphan = 0;
             let totalCosechaOrphan = 0;
             let totalImporteOrphan = 0;
+            let totalCajasOrphan = 0;
+            let totalCajonesOrphan = 0;
+            const parseHorasSegmentOrphan = (seg: string): number => {
+                const s = seg.startsWith('H ') ? seg.slice(2) : seg;
+                const n = parseFloat(s);
+                return isNaN(n) ? 0 : n;
+            };
             const horasOrphan = dateStrings.map(dateStr => {
                 const att = atts.find(a => a.date && a.date.startsWith(dateStr));
                 if (!att) return '';
@@ -286,22 +336,40 @@ export async function exportExcel(
                 const valStr = String(rawVal).trim();
                 if (valStr === '' || valStr === 'null') return '';
                 if (valStr.includes('|')) {
-                    const [hrsPart, rest] = valStr.split('|');
-                    const hrsNum = parseFloat(hrsPart);
-                    if (!isNaN(hrsNum) && hrsNum > 0) totalHorasOrphan += hrsNum;
-                    if (rest?.startsWith('C:')) {
-                        const kg = parseFloat(rest.slice(2).replace(',', '.'));
-                        if (!isNaN(kg)) totalCosechaOrphan += kg;
-                    } else if (rest?.startsWith('AB:')) {
-                        const imp = parseFloat(rest.slice(3).replace(',', '.'));
-                        if (!isNaN(imp)) totalImporteOrphan += imp;
+                    const segs = valStr.split('|');
+                    const hrsNum = parseHorasSegmentOrphan(segs[0]);
+                    if (hrsNum > 0) totalHorasOrphan += hrsNum;
+                    for (const seg of segs.slice(1)) {
+                        if (seg.startsWith('C:')) {
+                            const kg = parseFloat(seg.slice(2).replace(',', '.'));
+                            if (!isNaN(kg)) totalCosechaOrphan += kg;
+                        } else if (seg.startsWith('AB:')) {
+                            const imp = parseFloat(seg.slice(3).replace(',', '.'));
+                            if (!isNaN(imp)) totalImporteOrphan += imp;
+                        } else if (seg.startsWith('Cajas ') || seg.startsWith('Cajones ')) {
+                            const cajasM = seg.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/);
+                            const cajonesM = seg.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/);
+                            if (cajasM) {
+                                const v = parseFloat(cajasM[1].replace(',', '.'));
+                                if (!isNaN(v)) totalCajasOrphan += v;
+                            }
+                            if (cajonesM) {
+                                const v = parseFloat(cajonesM[1].replace(',', '.'));
+                                if (!isNaN(v)) totalCajonesOrphan += v;
+                            }
+                        }
                     }
-                    return `${hrsNum > 0 ? hrsNum + 'H' : '0H'}|${rest}`;
+                    return `${hrsNum > 0 ? hrsNum + 'H' : '0H'}|${segs.slice(1).join('|')}`;
                 }
                 if (valStr.startsWith('$')) {
                     const imp = parseFloat(valStr.slice(1).replace(',', '.'));
                     if (!isNaN(imp) && imp > 0) totalImporteOrphan += imp;
                     return valStr;
+                }
+                if (valStr.startsWith('H ')) {
+                    const numericVal = parseHorasSegmentOrphan(valStr);
+                    if (numericVal > 0) totalHorasOrphan += numericVal;
+                    return `${numericVal}H`;
                 }
                 const numericVal = parseFloat(valStr);
                 if (!isNaN(numericVal)) {
@@ -314,6 +382,13 @@ export async function exportExcel(
             const partesOrphan: string[] = [];
             if (totalHorasOrphan > 0) partesOrphan.push(`${totalHorasOrphan}H`);
             if (totalCosechaOrphan > 0) partesOrphan.push(`C:${totalCosechaOrphan}`);
+            if (totalCajasOrphan > 0 || totalCajonesOrphan > 0) {
+                const cajasCajonesOrphan = [
+                    totalCajasOrphan > 0 ? `Cajas ${totalCajasOrphan}` : '',
+                    totalCajonesOrphan > 0 ? `Cajones ${totalCajonesOrphan}` : '',
+                ].filter(Boolean).join(' ');
+                partesOrphan.push(cajasCajonesOrphan);
+            }
             if (totalImporteOrphan > 0) partesOrphan.push(`$${totalImporteOrphan.toLocaleString('es')}`);
             const totalCellOrphan = partesOrphan.length > 0 ? partesOrphan.join(' | ') : 0;
             const toSector = transferOutMap.get(empId)
@@ -352,7 +427,7 @@ export async function exportExcel(
         for (let i = 0; i < daysArr.length; i++) cols.push({ wch: 6 });
 
         // Add width for TOTAL column
-        cols.push({ wch: 22 }); // TOTAL (más ancho para "20H | C:371 | $47573")
+        cols.push({ wch: 34 }); // TOTAL (más ancho para "20H | C:371 | Cajas 32 Cajones 43 | $47573")
         cols.push({ wch: 30 }); // OBSERVACIONES
 
         ws['!cols'] = cols;

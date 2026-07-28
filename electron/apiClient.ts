@@ -73,6 +73,8 @@ export interface ApiAttendance {
     record_sector_name?: string;
     date: string;          // ISO date string e.g. "2026-03-15"
     hours?: number | null;
+    cajas?: number | null;
+    cajones?: number | null;
     status?: string | null;
     first_name?: string;   // may be joined from employees table
     last_name?: string;
@@ -419,14 +421,21 @@ export async function fetchAttendances(
                 // Old migrated data: stored as hours (8, 12, etc. < 60)
                 // New submissions: stored as minutes (480, 720, etc. >= 60)
                 // Non-numeric values (e.g. "C", "$36400"): pass through as-is
-                // Compound format: "4|C:33", "0|AB:47573,53" → {horas}|{tipo}:{valor}
+                // Compound format: "H 4|C:33", "H 0|AB:47573,53", "H 4|Cajas 32 Cajones 43"
+                // Las horas ahora llevan el prefijo "H " (con espacio); datos viejos sin prefijo se siguen leyendo igual.
+                const parseHorasSegment = (seg: string): number | null => {
+                    const n = seg.startsWith('H ') ? parseFloat(seg.slice(2)) : parseFloat(seg);
+                    return isNaN(n) ? null : n;
+                };
                 let hoursVal: string | null;
                 let hoursNum: number | null;
                 if (rawStr.includes('|')) {
-                    // Formato compuesto — extraer la parte de horas del prefijo
-                    const hrsPart = parseFloat(rawStr.split('|')[0]);
+                    // Formato compuesto — extraer la parte de horas del primer segmento
                     hoursVal = rawStr;
-                    hoursNum = isNaN(hrsPart) ? null : hrsPart;
+                    hoursNum = parseHorasSegment(rawStr.split('|')[0]);
+                } else if (rawStr.startsWith('H ')) {
+                    hoursVal = rawStr;
+                    hoursNum = parseHorasSegment(rawStr);
                 } else if (!isNaN(num) && num > 0) {
                     const h = num < 60 ? num : num / 60;
                     hoursVal = String(h);
@@ -435,6 +444,12 @@ export async function fetchAttendances(
                     hoursVal = raw ?? null;
                     hoursNum = null;
                 }
+                // Cajas y Cajones: segmento "Cajas 32 Cajones 43" (o solo uno de los dos)
+                const cajasCajonesSeg = rawStr.split('|').find(p => p.startsWith('Cajas ') || p.startsWith('Cajones '));
+                const cajasMatch = cajasCajonesSeg?.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/);
+                const cajonesMatch = cajasCajonesSeg?.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/);
+                const cajasNum = cajasMatch ? parseFloat(cajasMatch[1].replace(',', '.')) : null;
+                const cajonesNum = cajonesMatch ? parseFloat(cajonesMatch[1].replace(',', '.')) : null;
                 return {
                     id: r.submission_id,
                     employee_id: r.employee_id ?? '',
@@ -445,6 +460,8 @@ export async function fetchAttendances(
                     minutes_worked: raw,
                     work_value: hoursVal,
                     hours: hoursNum,
+                    cajas: cajasNum,
+                    cajones: cajonesNum,
                     first_name: r.first_name,
                     last_name: r.last_name,
                     dni: r.dni,

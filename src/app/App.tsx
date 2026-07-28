@@ -166,6 +166,8 @@ function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: 
   const horasTotales = isGlobal ? globalStats.horasTotales : null;
   const cosechaTotales = isGlobal ? globalStats.cosechaTotales : null;
   const importeTotales = isGlobal ? globalStats.importeTotales : null;
+  const cajasTotales = isGlobal ? globalStats.cajasTotales : null;
+  const cajonesTotales = isGlobal ? globalStats.cajonesTotales : null;
 
   const fmtH = (v: number | null) => v === null ? "—" : v === 0 ? "0H" : v < 1 ? "<1H" : `${Math.round(v)}H`;
   const fmtKg = (v: number | null) => v === null ? "—" : v === 0 ? "0" : v.toLocaleString("es", { maximumFractionDigits: 0 });
@@ -188,6 +190,8 @@ function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: 
         {stat("Ausentes", ausentes)}
         {stat("Horas", fmtH(horasTotales))}
         {stat("Cosecha", fmtKg(cosechaTotales))}
+        {stat("Cajas", fmtKg(cajasTotales))}
+        {stat("Cajones", fmtKg(cajonesTotales))}
         {stat("Importe", fmtPesos(importeTotales))}
         {stat("Sectores", src.length)}
       </div>
@@ -437,20 +441,27 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
 
   // Determina color + texto de una celda día según el valor registrado.
   // La cosecha es un número plano (cantidad de tarjas/unidades), no kg — se muestra "C {numero}".
+  // Las horas llevan prefijo "H " desde la app; rec.hours ya viene parseado correctamente por apiClient.ts.
   const renderDayCell = (rec: any) => {
     if (!rec) return { bg: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.2)", text: "—" };
     const workValue: string = rec.work_value != null ? String(rec.work_value) : "";
     if (workValue.includes('|')) {
-      const [, tipo] = workValue.split('|');
-      if (tipo?.startsWith('C:')) {
-        const num = parseFloat(tipo.slice(2).replace(',', '.'));
-        return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: `C ${!isNaN(num) ? num : ''}`.trim() };
+      const partes: string[] = [];
+      for (const seg of workValue.split('|').slice(1)) {
+        if (seg.startsWith('C:')) {
+          const num = parseFloat(seg.slice(2).replace(',', '.'));
+          partes.push(`C ${!isNaN(num) ? num : ''}`.trim());
+        } else if (seg.startsWith('AB:')) {
+          const num = parseFloat(seg.slice(3).replace(',', '.'));
+          partes.push(`$ ${!isNaN(num) ? num.toLocaleString('es') : ''}`.trim());
+        } else if (seg.startsWith('Cajas ') || seg.startsWith('Cajones ')) {
+          const cajasM = seg.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/);
+          const cajonesM = seg.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/);
+          if (cajasM) partes.push(`Cj ${cajasM[1]}`);
+          if (cajonesM) partes.push(`Cn ${cajonesM[1]}`);
+        }
       }
-      if (tipo?.startsWith('AB:')) {
-        const num = parseFloat(tipo.slice(3).replace(',', '.'));
-        return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: `$ ${!isNaN(num) ? num.toLocaleString('es') : ''}`.trim() };
-      }
-      return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: "•" };
+      return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: partes.length > 0 ? partes.join(' ') : '•' };
     }
     if (workValue === 'C') return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: "C" };
     if (workValue.startsWith('$')) {
@@ -465,26 +476,39 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     return { bg: "rgba(255,193,7,0.55)", color: "#1E1E2E", text: String(Math.round(hours * 10) / 10) };
   };
 
-  // Total del período por empleado — cuenta horas + cosecha (número plano, sin unidad) + importe ($), no solo horas.
+  // Total del período por empleado — cuenta horas + cosecha + cajas + cajones + importe, no solo horas.
   // Mismo criterio que exportExcel.ts para que el total coincida con el del Excel.
   const computeEmployeeTotal = (empMap: Record<string, any>) => {
-    let horas = 0, kg = 0, importe = 0;
+    let horas = 0, kg = 0, importe = 0, cajas = 0, cajones = 0;
+    const parseHorasSegment = (seg: string): number => {
+      const s = seg.startsWith('H ') ? seg.slice(2) : seg;
+      const n = parseFloat(s);
+      return isNaN(n) ? 0 : n;
+    };
     for (const rec of Object.values(empMap)) {
       const workValue: string = rec.work_value != null ? String(rec.work_value) : "";
       if (workValue.includes('|')) {
-        const [hrsPart, tipo] = workValue.split('|');
-        const h = parseFloat(hrsPart);
-        if (!isNaN(h) && h > 0) horas += h;
-        if (tipo?.startsWith('C:')) {
-          const v = parseFloat(tipo.slice(2).replace(',', '.'));
-          if (!isNaN(v)) kg += v;
-        } else if (tipo?.startsWith('AB:')) {
-          const v = parseFloat(tipo.slice(3).replace(',', '.'));
-          if (!isNaN(v)) importe += v;
+        const segs = workValue.split('|');
+        horas += parseHorasSegment(segs[0]);
+        for (const seg of segs.slice(1)) {
+          if (seg.startsWith('C:')) {
+            const v = parseFloat(seg.slice(2).replace(',', '.'));
+            if (!isNaN(v)) kg += v;
+          } else if (seg.startsWith('AB:')) {
+            const v = parseFloat(seg.slice(3).replace(',', '.'));
+            if (!isNaN(v)) importe += v;
+          } else if (seg.startsWith('Cajas ') || seg.startsWith('Cajones ')) {
+            const cajasM = seg.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/);
+            const cajonesM = seg.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/);
+            if (cajasM) { const v = parseFloat(cajasM[1].replace(',', '.')); if (!isNaN(v)) cajas += v; }
+            if (cajonesM) { const v = parseFloat(cajonesM[1].replace(',', '.')); if (!isNaN(v)) cajones += v; }
+          }
         }
       } else if (workValue.startsWith('$')) {
         const v = parseFloat(workValue.slice(1).replace(',', '.'));
         if (!isNaN(v)) importe += v;
+      } else if (workValue.startsWith('H ')) {
+        horas += parseHorasSegment(workValue);
       } else {
         const num = parseFloat(workValue);
         if (!isNaN(num)) horas += num;
@@ -493,6 +517,9 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     const partes: string[] = [];
     if (horas > 0) partes.push(`${horas}H`);
     if (kg > 0) partes.push(`C:${kg}`);
+    if (cajas > 0 || cajones > 0) {
+      partes.push([cajas > 0 ? `Cajas ${cajas}` : '', cajones > 0 ? `Cajones ${cajones}` : ''].filter(Boolean).join(' '));
+    }
     if (importe > 0) partes.push(`$${importe.toLocaleString('es')}`);
     return partes.length > 0 ? partes.join(' | ') : '—';
   };
@@ -1367,7 +1394,8 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
           if (!str || str === 'null') continue;
 
           let valForPdf: number | string = str;
-          const numericVal = parseFloat(str);
+          // Las horas llevan prefijo "H " desde la app — se saca antes de parsear
+          const numericVal = parseFloat(str.startsWith('H ') ? str.slice(2) : str);
           if (!isNaN(numericVal)) {
             if (numericVal <= 0) continue;
             valForPdf = numericVal;
@@ -1630,7 +1658,7 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null); // visible error feedback
   
   const [searchQuery, setSearchQuery] = useState("");
-  const [globalStats, setGlobalStats] = useState({ ausentes: 0, horasTotales: 0, cosechaTotales: 0, importeTotales: 0 });
+  const [globalStats, setGlobalStats] = useState({ ausentes: 0, horasTotales: 0, cosechaTotales: 0, importeTotales: 0, cajasTotales: 0, cajonesTotales: 0 });
 
   // Global Employee Search — llama al endpoint /api/admin/employees/search
   const [employeeSearchResults, setEmployeeSearchResults] = useState<{ emp: Employee; sector: Sector }[]>([]);
@@ -1922,9 +1950,16 @@ export default function App() {
       let totalH = 0;
       let totalCosecha = 0;
       let totalImporte = 0;
+      let totalCajas = 0;
+      let totalCajones = 0;
       if (sectors && sectors.length > 0) {
+          const parseHorasSegment = (seg: string): number => {
+              const s = seg.startsWith('H ') ? seg.slice(2) : seg;
+              const n = parseFloat(s);
+              return isNaN(n) ? 0 : n;
+          };
           const results = await Promise.all(sectors.map(async (sec) => {
-              let sH = 0, sC = 0, sI = 0;
+              let sH = 0, sC = 0, sI = 0, sCj = 0, sCn = 0;
               const url = `https://staffaxis-new-version-production.up.railway.app/api/admin/report?sector_id=${encodeURIComponent(sec.apiId)}&start_date=${todayStr}&end_date=${todayStr}`;
               try {
                   const res = await fetch(url, { headers });
@@ -1935,17 +1970,24 @@ export default function App() {
                               // La API ya filtra por start_date/end_date, no hace falta revalidar la fecha
                               const val = String(att.minutes_worked ?? "").trim();
                               if (!val || val === "null") continue;
-                              // Formato compuesto: "4|C:33" o "0|AB:47573,53"
+                              // Formato compuesto: "H 4|C:33", "H 0|AB:47573,53", "H 4|Cajas 32 Cajones 43"
                               if (val.includes('|')) {
-                                  const [hrsPart, typePart] = val.split('|');
-                                  const hrs = parseFloat(hrsPart);
-                                  if (!isNaN(hrs) && hrs > 0) sH += hrs;
-                                  if (typePart?.startsWith('C:')) {
-                                      const kg = parseFloat(typePart.slice(2).replace(',', '.'));
-                                      if (!isNaN(kg)) sC += kg;
-                                  } else if (typePart?.startsWith('AB:')) {
-                                      const imp = parseFloat(typePart.slice(3).replace(',', '.'));
-                                      if (!isNaN(imp)) sI += imp;
+                                  const segs = val.split('|');
+                                  const hrs = parseHorasSegment(segs[0]);
+                                  if (hrs > 0) sH += hrs;
+                                  for (const seg of segs.slice(1)) {
+                                      if (seg.startsWith('C:')) {
+                                          const kg = parseFloat(seg.slice(2).replace(',', '.'));
+                                          if (!isNaN(kg)) sC += kg;
+                                      } else if (seg.startsWith('AB:')) {
+                                          const imp = parseFloat(seg.slice(3).replace(',', '.'));
+                                          if (!isNaN(imp)) sI += imp;
+                                      } else if (seg.startsWith('Cajas ') || seg.startsWith('Cajones ')) {
+                                          const cajasM = seg.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/);
+                                          const cajonesM = seg.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/);
+                                          if (cajasM) { const v = parseFloat(cajasM[1].replace(',', '.')); if (!isNaN(v)) sCj += v; }
+                                          if (cajonesM) { const v = parseFloat(cajonesM[1].replace(',', '.')); if (!isNaN(v)) sCn += v; }
+                                      }
                                   }
                               } else if (val === 'C') {
                                   // cosecha sin cantidad
@@ -1953,6 +1995,8 @@ export default function App() {
                               } else if (val.startsWith('$')) {
                                   const imp = parseFloat(val.slice(1).replace(',', '.'));
                                   if (!isNaN(imp)) sI += imp;
+                              } else if (val.startsWith('H ')) {
+                                  sH += parseHorasSegment(val);
                               } else {
                                   const num = parseFloat(val);
                                   if (!isNaN(num) && num > 0) {
@@ -1966,13 +2010,13 @@ export default function App() {
               } catch(err) {
                   console.error("[Stats] Error for sector", sec.name, err);
               }
-              return { sH, sC, sI };
+              return { sH, sC, sI, sCj, sCn };
           }));
-          for (const r of results) { totalH += r.sH; totalCosecha += r.sC; totalImporte += r.sI; }
+          for (const r of results) { totalH += r.sH; totalCosecha += r.sC; totalImporte += r.sI; totalCajas += r.sCj; totalCajones += r.sCn; }
       }
 
-      console.log("[Stats] Horas:", totalH, "Cosecha:", totalCosecha, "Importe:", totalImporte);
-      setGlobalStats({ ausentes: ausentesCount, horasTotales: totalH, cosechaTotales: totalCosecha, importeTotales: totalImporte });
+      console.log("[Stats] Horas:", totalH, "Cosecha:", totalCosecha, "Importe:", totalImporte, "Cajas:", totalCajas, "Cajones:", totalCajones);
+      setGlobalStats({ ausentes: ausentesCount, horasTotales: totalH, cosechaTotales: totalCosecha, importeTotales: totalImporte, cajasTotales: totalCajas, cajonesTotales: totalCajones });
     } catch (e) {
       console.error("[Stats] Critical error:", e);
     }
