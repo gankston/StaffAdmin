@@ -94,8 +94,20 @@ export async function exportExcel(
 
         // ── Create workbook and matrix ────────────────────────────────────
         const wb = XLSX.utils.book_new();
+
+        // Formatea un total numérico: entero sin decimales, decimal con coma (ej: 19,58)
+        const fmtNum = (n: number): string => {
+            const r = Math.round(n * 100) / 100;
+            return Number.isInteger(r) ? String(r) : r.toFixed(2).replace('.', ',');
+        };
+        // Celda de total por tipo: "<sigla> <numero>", vacía si no hay dato
+        const celdaTotal = (sigla: string, n: number): string => (n > 0 ? `${sigla} ${fmtNum(n)}` : '');
+        const celdaImporte = (n: number): string => (n > 0 ? `$${n.toLocaleString('es')}` : '');
+
         // 1. Inicializar la matriz con las filas iniciales
-        const filaCabeceras = ['N', 'DNI', params?.sectorName ?? 'SECTOR', ...daysArr, 'TOTAL', 'OBSERVACIONES'];
+        // Una columna de total separada por cada tipo de dato
+        const filaCabeceras = ['N', 'DNI', params?.sectorName ?? 'SECTOR', ...daysArr,
+            'HORAS', 'COSECHA', 'CAJAS', 'CAJONES', 'IMPORTE', 'OBSERVACIONES'];
         const excelData: (string | number | null)[][] = [
             ['ENCARGADO'],
             [params?.encargado || 'SERGIO GODOY'],
@@ -104,6 +116,10 @@ export async function exportExcel(
         ];
 
         let granTotalHoras = 0;
+        let granTotalCosecha = 0;
+        let granTotalCajas = 0;
+        let granTotalCajones = 0;
+        let granTotalImporte = 0;
 
         // ── Mapeo de Empleados (Filas 5 en adelante) ─────────────────────
         const attendances = params?.attendances ?? [];
@@ -244,21 +260,11 @@ export async function exportExcel(
                 }
             });
 
-            granTotalHoras += totalHorasEmpleado;
-
-            // Celda TOTAL del empleado: arma un string compuesto con todo lo que trabajó
-            const partesTotalEmp: string[] = [];
-            if (totalHorasEmpleado > 0) partesTotalEmp.push(`${totalHorasEmpleado}H`);
-            if (totalCosechaEmpleado > 0) partesTotalEmp.push(`C:${totalCosechaEmpleado}`);
-            if (totalCajasEmpleado > 0 || totalCajonesEmpleado > 0) {
-                const cajasCajonesTotal = [
-                    totalCajasEmpleado > 0 ? `Cajas ${totalCajasEmpleado}` : '',
-                    totalCajonesEmpleado > 0 ? `Cajones ${totalCajonesEmpleado}` : '',
-                ].filter(Boolean).join(' ');
-                partesTotalEmp.push(cajasCajonesTotal);
-            }
-            if (totalImporteEmpleado > 0) partesTotalEmp.push(`$${totalImporteEmpleado.toLocaleString('es')}`);
-            const totalCellEmp = partesTotalEmp.length > 0 ? partesTotalEmp.join(' | ') : 0;
+            granTotalHoras   += totalHorasEmpleado;
+            granTotalCosecha += totalCosechaEmpleado;
+            granTotalCajas   += totalCajasEmpleado;
+            granTotalCajones += totalCajonesEmpleado;
+            granTotalImporte += totalImporteEmpleado;
 
             // Notas de asistencias del empleado (una por día que tenga nota)
             const empNotasParts: string[] = [];
@@ -291,7 +297,11 @@ export async function exportExcel(
                 emp.dni || (emp as any).document_number || (emp as any).document || 'Sin datos',
                 `${emp.last_name} ${emp.first_name}`.trim(),
                 ...horasDelEmpleado,
-                totalCellEmp,
+                celdaTotal('H',  totalHorasEmpleado),
+                celdaTotal('C',  totalCosechaEmpleado),
+                celdaTotal('CJ', totalCajasEmpleado),
+                celdaTotal('CN', totalCajonesEmpleado),
+                celdaImporte(totalImporteEmpleado),
                 notaOtrosSectores
             ]);
         });
@@ -378,19 +388,11 @@ export async function exportExcel(
                 }
                 return valStr;
             });
-            granTotalHoras += totalHorasOrphan;
-            const partesOrphan: string[] = [];
-            if (totalHorasOrphan > 0) partesOrphan.push(`${totalHorasOrphan}H`);
-            if (totalCosechaOrphan > 0) partesOrphan.push(`C:${totalCosechaOrphan}`);
-            if (totalCajasOrphan > 0 || totalCajonesOrphan > 0) {
-                const cajasCajonesOrphan = [
-                    totalCajasOrphan > 0 ? `Cajas ${totalCajasOrphan}` : '',
-                    totalCajonesOrphan > 0 ? `Cajones ${totalCajonesOrphan}` : '',
-                ].filter(Boolean).join(' ');
-                partesOrphan.push(cajasCajonesOrphan);
-            }
-            if (totalImporteOrphan > 0) partesOrphan.push(`$${totalImporteOrphan.toLocaleString('es')}`);
-            const totalCellOrphan = partesOrphan.length > 0 ? partesOrphan.join(' | ') : 0;
+            granTotalHoras   += totalHorasOrphan;
+            granTotalCosecha += totalCosechaOrphan;
+            granTotalCajas   += totalCajasOrphan;
+            granTotalCajones += totalCajonesOrphan;
+            granTotalImporte += totalImporteOrphan;
             const toSector = transferOutMap.get(empId)
                 ?? atts.find(a => a.current_sector_name && a.current_sector_name !== params?.sectorName)?.current_sector_name
                 ?? atts[0]?.current_sector_name;
@@ -402,17 +404,25 @@ export async function exportExcel(
                 dni,
                 `${last_name} ${first_name}`.trim(),
                 ...horasOrphan,
-                totalCellOrphan,
+                celdaTotal('H',  totalHorasOrphan),
+                celdaTotal('C',  totalCosechaOrphan),
+                celdaTotal('CJ', totalCajasOrphan),
+                celdaTotal('CN', totalCajonesOrphan),
+                celdaImporte(totalImporteOrphan),
                 notaOrphan,
             ]);
         });
 
         // 4. Construir e insertar la fila del Gran Total al final
-        // El gran total va en la columna TOTAL (penúltima), no en OBSERVACIONES (última)
-        const totalColIdx = filaCabeceras.length - 2; // 'TOTAL' está antes de 'OBSERVACIONES'
+        // Las 5 columnas de total van antes de OBSERVACIONES (última)
+        const importeColIdx = filaCabeceras.length - 2; // IMPORTE está justo antes de OBSERVACIONES
         const filaFinal = Array(filaCabeceras.length).fill('');
         filaFinal[2] = 'TOTAL';
-        filaFinal[totalColIdx] = `${granTotalHoras}H`;
+        filaFinal[importeColIdx - 4] = celdaTotal('H',  granTotalHoras);
+        filaFinal[importeColIdx - 3] = celdaTotal('C',  granTotalCosecha);
+        filaFinal[importeColIdx - 2] = celdaTotal('CJ', granTotalCajas);
+        filaFinal[importeColIdx - 1] = celdaTotal('CN', granTotalCajones);
+        filaFinal[importeColIdx]     = celdaImporte(granTotalImporte);
         excelData.push(filaFinal);
 
         const ws = XLSX.utils.aoa_to_sheet(excelData);
@@ -426,8 +436,12 @@ export async function exportExcel(
         // Add width for days
         for (let i = 0; i < daysArr.length; i++) cols.push({ wch: 6 });
 
-        // Add width for TOTAL column
-        cols.push({ wch: 34 }); // TOTAL (más ancho para "20H | C:371 | Cajas 32 Cajones 43 | $47573")
+        // Una columna por cada tipo de total
+        cols.push({ wch: 10 }); // HORAS    -> "H 43"
+        cols.push({ wch: 11 }); // COSECHA  -> "C 338"
+        cols.push({ wch: 11 }); // CAJAS    -> "CJ 19,58"
+        cols.push({ wch: 11 }); // CAJONES  -> "CN 42,02"
+        cols.push({ wch: 13 }); // IMPORTE  -> "$47.573"
         cols.push({ wch: 30 }); // OBSERVACIONES
 
         ws['!cols'] = cols;

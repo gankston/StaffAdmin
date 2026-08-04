@@ -840,6 +840,12 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
                 <tbody>
                   {employees
                     .filter(emp => emp.is_active && `${emp.first_name || ''} ${emp.last_name || ''} ${emp.dni || ''}`.toLowerCase().includes(localSearch.toLowerCase()))
+                    // Orden por apellido, igual que en el Excel exportado
+                    .slice()
+                    .sort((a, b) => {
+                      const key = (e: Employee) => `${e.last_name || ''} ${e.first_name || ''}`.trim().toLowerCase();
+                      return key(a).localeCompare(key(b), 'es');
+                    })
                     .map((emp, idx) => {
                       const isAbsent = absentEmployeeIds.has(emp.id);
                       const rowBg = idx % 2 === 0 ? "#26263A" : "#2B2B40";
@@ -867,10 +873,10 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
                                 className="flex items-center justify-center rounded-full flex-shrink-0"
                                 style={{ width: 24, height: 24, background: isAbsent ? "rgba(255,82,82,0.2)" : "rgba(156,39,176,0.18)", color: isAbsent ? "#FF5252" : "#C86FE8", fontSize: 10, fontWeight: 700 }}
                               >
-                                {emp.first_name.charAt(0).toUpperCase()}
+                                {(emp.last_name || emp.first_name || '?').charAt(0).toUpperCase()}
                               </div>
                               <span style={{ fontSize: 11, fontWeight: 700, color: isAbsent ? "#ffaaaa" : "white", whiteSpace: "nowrap" }}>
-                                {emp.first_name} {emp.last_name}
+                                {`${emp.last_name || ''} ${emp.first_name || ''}`.trim()}
                               </span>
                             </div>
                           </td>
