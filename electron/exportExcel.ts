@@ -104,6 +104,29 @@ export async function exportExcel(
         const celdaTotal = (sigla: string, n: number): string => (n > 0 ? `${sigla} ${fmtNum(n)}` : '');
         const celdaImporte = (n: number): string => (n > 0 ? `$${n.toLocaleString('es')}` : '');
 
+        // ── Totales verticales por día (lo que cierra la jornada para RRHH) ──
+        // Se acumulan leyendo las celdas ya normalizadas de cada empleado ("8H",
+        // "0H|C:33", "$36400"), asi hay un solo criterio y no se duplica el parseo.
+        const totalesPorDia = dateStrings.map(() => ({ horas: 0, cosecha: 0, cajas: 0, cajones: 0, importe: 0 }));
+        const numDe = (s: string | undefined): number => {
+            if (!s) return 0;
+            const n = parseFloat(s.replace(',', '.'));
+            return isNaN(n) ? 0 : n;
+        };
+        const acumularPorDia = (celdas: string[]): void => {
+            celdas.forEach((celda, i) => {
+                const acc = totalesPorDia[i];
+                if (!acc || !celda || celda === 'AUSENTE') return;
+                acc.horas    += numDe(celda.match(/(?:^|\|)\s*([0-9]+(?:[.,][0-9]+)?)H/)?.[1]);
+                acc.cosecha  += numDe(celda.match(/C:([0-9]+(?:[.,][0-9]+)?)/)?.[1]);
+                acc.cajas    += numDe(celda.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/)?.[1]);
+                acc.cajones  += numDe(celda.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/)?.[1]);
+                const ab = celda.match(/AB:([0-9]+(?:[.,][0-9]+)?)/)?.[1];
+                if (ab) acc.importe += numDe(ab);
+                else if (celda.startsWith('$')) acc.importe += numDe(celda.slice(1));
+            });
+        };
+
         // 1. Inicializar la matriz con las filas iniciales
         // Una columna de total separada por cada tipo de dato
         const filaCabeceras = ['N', 'DNI', params?.sectorName ?? 'SECTOR', ...daysArr,
@@ -260,6 +283,8 @@ export async function exportExcel(
                 }
             });
 
+            acumularPorDia(horasDelEmpleado);
+
             granTotalHoras   += totalHorasEmpleado;
             granTotalCosecha += totalCosechaEmpleado;
             granTotalCajas   += totalCajasEmpleado;
@@ -388,6 +413,8 @@ export async function exportExcel(
                 }
                 return valStr;
             });
+            acumularPorDia(horasOrphan);
+
             granTotalHoras   += totalHorasOrphan;
             granTotalCosecha += totalCosechaOrphan;
             granTotalCajas   += totalCajasOrphan;
@@ -424,6 +451,37 @@ export async function exportExcel(
         filaFinal[importeColIdx - 1] = celdaTotal('CN', granTotalCajones);
         filaFinal[importeColIdx]     = celdaImporte(granTotalImporte);
         excelData.push(filaFinal);
+
+        // 5. Cierre por jornada: una fila por concepto con el total de cada día.
+        // La fila TOTAL de arriba resume el período; estas cierran día por día.
+        const PRIMER_DIA_COL = 3; // N, DNI, SECTOR y recién ahí arrancan los días
+        const filasPorConcepto: Array<{
+            etiqueta: string;
+            colTotal: number;
+            valor: (t: typeof totalesPorDia[number]) => number;
+            celda: (n: number) => string;
+        }> = [
+            { etiqueta: 'TOTAL HORAS',   colTotal: importeColIdx - 4, valor: t => t.horas,   celda: n => `${fmtNum(n)}H` },
+            { etiqueta: 'TOTAL COSECHA', colTotal: importeColIdx - 3, valor: t => t.cosecha, celda: n => fmtNum(n) },
+            { etiqueta: 'TOTAL CAJAS',   colTotal: importeColIdx - 2, valor: t => t.cajas,   celda: n => fmtNum(n) },
+            { etiqueta: 'TOTAL CAJONES', colTotal: importeColIdx - 1, valor: t => t.cajones, celda: n => fmtNum(n) },
+            { etiqueta: 'TOTAL IMPORTE', colTotal: importeColIdx,     valor: t => t.importe, celda: n => `$${n.toLocaleString('es')}` },
+        ];
+
+        filasPorConcepto.forEach(({ etiqueta, colTotal, valor, celda }) => {
+            // Si en todo el período no hubo nada de este tipo, no ensuciamos la planilla
+            const totalPeriodo = totalesPorDia.reduce((acc, t) => acc + valor(t), 0);
+            if (totalPeriodo <= 0) return;
+
+            const fila = Array(filaCabeceras.length).fill('');
+            fila[2] = etiqueta;
+            totalesPorDia.forEach((t, i) => {
+                const n = valor(t);
+                if (n > 0) fila[PRIMER_DIA_COL + i] = celda(n);
+            });
+            fila[colTotal] = celda(totalPeriodo);
+            excelData.push(fila);
+        });
 
         const ws = XLSX.utils.aoa_to_sheet(excelData);
 

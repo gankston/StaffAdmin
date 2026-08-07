@@ -79,6 +79,9 @@ export interface ApiAttendance {
     first_name?: string;   // may be joined from employees table
     last_name?: string;
     dni?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    submitted_at?: string | null;
     [key: string]: any;    // ignoreUnknownKeys: extra columns are silently ignored
 }
 
@@ -466,6 +469,9 @@ export async function fetchAttendances(
                     last_name: r.last_name,
                     dni: r.dni,
                     notes: r.notes,
+                    latitude: r.latitude ?? null,
+                    longitude: r.longitude ?? null,
+                    submitted_at: r.submitted_at ?? null,
                 };
               })
             : [];

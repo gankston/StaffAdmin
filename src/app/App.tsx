@@ -43,6 +43,11 @@ import {
   Eye,
   ImageOff,
   Upload,
+  ShieldCheck,
+  MapPin,
+  Ban,
+  Smartphone,
+  Crown,
 } from "lucide-react";
 
 
@@ -258,6 +263,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [empLoading, setEmpLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [locatingTarja, setLocatingTarja] = useState(false);
   const [absentEmployeeIds, setAbsentEmployeeIds] = useState<Set<string>>(new Set());
   const [absenceLoading, setAbsenceLoading] = useState(false);
   const [localSearch, setLocalSearch] = useState("");
@@ -624,6 +630,34 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
       console.error('[Export] IPC error:', err);
     } finally {
       setExporting(false);
+    }
+  };
+
+  // ── Ubicación: misma lógica que el pin de "Solicitudes de Autorización" —
+  // abre Google Maps con la ubicación de la tarja más reciente del período que
+  // haya llegado con coordenadas (la app las manda desde v3.4.2+, las viejas no).
+  const handleShowLocation = async () => {
+    if (locatingTarja || !window.electronAPI?.getAttendances) return;
+    setLocatingTarja(true);
+    try {
+      const { startDate, endDate } = computePeriodRange(periodMonth, periodYear);
+      const adminToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+      const attendances = await window.electronAPI.getAttendances(sector.apiId, startDate, endDate, adminToken);
+      const conUbicacion = (attendances as any[])
+        .filter(a => a.latitude != null && a.longitude != null)
+        .sort((a, b) => new Date(b.submitted_at ?? b.date).getTime() - new Date(a.submitted_at ?? a.date).getTime());
+
+      if (conUbicacion.length === 0) {
+        alert("Ninguna tarja de este período trajo ubicación (o son de una versión de la app anterior al GPS).");
+        return;
+      }
+      const ultima = conUbicacion[0];
+      window.open(`https://www.google.com/maps?q=${ultima.latitude},${ultima.longitude}`, "_blank");
+    } catch (err) {
+      console.error('[Ubicacion] Error:', err);
+      alert("Error de conexión al buscar la ubicación.");
+    } finally {
+      setLocatingTarja(false);
     }
   };
 
@@ -1038,6 +1072,20 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
             </div>
           </div>
 
+          <button
+            onClick={handleShowLocation}
+            disabled={locatingTarja}
+            className={`flex items-center justify-center gap-2.5 w-full py-3 rounded-xl transition-all mb-3 ${!locatingTarja ? 'hover:opacity-90 active:scale-[0.98]' : 'opacity-50 cursor-not-allowed'}`}
+            style={{ background: "rgba(38,198,218,0.15)", border: "1px solid rgba(38,198,218,0.4)", cursor: locatingTarja ? "not-allowed" : "pointer" }}
+          >
+            {locatingTarja
+              ? <div className="rounded-full" style={{ width: 14, height: 14, border: "2px solid rgba(38,198,218,0.3)", borderTop: "2px solid #26C6DA", animation: "spin 0.8s linear infinite" }} />
+              : <MapPin size={16} color="#26C6DA" />}
+            <span style={{ color: "#26C6DA", fontSize: 13, fontWeight: 700 }}>
+              {locatingTarja ? "Buscando..." : "Mostrar ubicación"}
+            </span>
+          </button>
+
           <div
             onMouseEnter={() => isMissing && setShowTooltip(true)}
             onMouseLeave={() => setShowTooltip(false)}
@@ -1339,6 +1387,300 @@ function ReportSectorCard({ name, color, gradient, employeeCount, onClick }: {
         <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>Ver empleados</span>
         <ChevronRight size={12} color="rgba(255,255,255,0.35)" />
       </div>
+    </div>
+  );
+}
+
+// ─── Panel de Solicitudes de Autorización ──────────────────────────────────
+
+const ACCESOS_API_BASE = "https://staffaxis-new-version-production.up.railway.app";
+
+interface AccessRequest {
+  id: string;
+  full_name: string;
+  sector_name: string;
+  phone_model: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  status: string;
+  authorized_by: string | null;
+  created_at: string;
+}
+
+interface AccessDevice {
+  id: string;
+  device_id: string;
+  encargado_name: string;
+  sector_name: string | null;
+  phone_model: string | null;
+  is_master: boolean;
+  approved: boolean;
+  revoked: boolean;
+  created_at: string;
+}
+
+function accesosHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const rawToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+  const token = rawToken === "undefined" ? "" : rawToken;
+  if (token) headers["X-Admin-Token"] = token;
+  return headers;
+}
+
+function accesosAdminEmail(): string {
+  try {
+    const raw = localStorage.getItem("admin_user");
+    if (raw && raw !== "undefined") {
+      const u = JSON.parse(raw);
+      if (u?.email) return u.email;
+      if (u?.username) return u.username;
+    }
+  } catch { /* noop */ }
+  return "admin";
+}
+
+function formatFechaHora(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  } catch { return iso; }
+}
+
+function PanelAccesos({ onPendingCountChange }: { onPendingCountChange: (n: number) => void }) {
+  const [tab, setTab] = useState<'pendientes' | 'dispositivos'>('pendientes');
+  const [pendientes, setPendientes] = useState<AccessRequest[]>([]);
+  const [dispositivos, setDispositivos] = useState<AccessDevice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const cargar = async () => {
+    setLoading(true);
+    try {
+      const [reqRes, devRes] = await Promise.all([
+        fetch(`${ACCESOS_API_BASE}/api/admin/access-requests?status=pending`, { headers: accesosHeaders() }),
+        fetch(`${ACCESOS_API_BASE}/api/admin/devices`, { headers: accesosHeaders() }),
+      ]);
+      const reqData = reqRes.ok ? await reqRes.json() : { requests: [] };
+      const devData = devRes.ok ? await devRes.json() : { devices: [] };
+      const reqs: AccessRequest[] = reqData.requests ?? [];
+      setPendientes(reqs);
+      setDispositivos(devData.devices ?? []);
+      onPendingCountChange(reqs.length);
+    } catch (e) {
+      console.error("[Accesos] error al cargar:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { cargar(); }, []);
+
+  const autorizar = async (id: string) => {
+    setBusyId(id);
+    try {
+      await fetch(`${ACCESOS_API_BASE}/api/admin/access-requests/${id}/authorize`, {
+        method: "POST", headers: accesosHeaders(),
+        body: JSON.stringify({ admin_email: accesosAdminEmail() }),
+      });
+      await cargar();
+    } catch (e) {
+      console.error("[Accesos] error al autorizar:", e);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const rechazar = async (id: string) => {
+    setBusyId(id);
+    try {
+      await fetch(`${ACCESOS_API_BASE}/api/admin/access-requests/${id}/reject`, {
+        method: "POST", headers: accesosHeaders(),
+        body: JSON.stringify({ admin_email: accesosAdminEmail() }),
+      });
+      await cargar();
+    } catch (e) {
+      console.error("[Accesos] error al rechazar:", e);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleRevocado = async (device: AccessDevice) => {
+    setBusyId(device.id);
+    try {
+      await fetch(`${ACCESOS_API_BASE}/api/admin/devices/${device.id}/${device.revoked ? 'unrevoke' : 'revoke'}`, {
+        method: "POST", headers: accesosHeaders(), body: "{}",
+      });
+      await cargar();
+    } catch (e) {
+      console.error("[Accesos] error al revocar/restaurar:", e);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const abrirMapa = (lat: number, lng: number) => {
+    window.open(`https://www.google.com/maps?q=${lat},${lng}`, "_blank");
+  };
+
+  return (
+    <div>
+      {/* Sub-tabs internas del panel */}
+      <div className="flex items-center gap-1 p-1 rounded-xl mb-5" style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.08)", width: "fit-content" }}>
+        <button
+          onClick={() => setTab('pendientes')}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
+          style={{
+            background: tab === 'pendientes' ? "rgba(76,175,80,0.15)" : "transparent",
+            border: tab === 'pendientes' ? "1px solid rgba(76,175,80,0.4)" : "1px solid transparent",
+            cursor: "pointer",
+          }}
+        >
+          <ShieldCheck size={13} color={tab === 'pendientes' ? "#81C784" : "rgba(255,255,255,0.4)"} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: tab === 'pendientes' ? "#81C784" : "rgba(255,255,255,0.4)" }}>
+            Pendientes {pendientes.length > 0 ? `(${pendientes.length})` : ''}
+          </span>
+        </button>
+        <button
+          onClick={() => setTab('dispositivos')}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
+          style={{
+            background: tab === 'dispositivos' ? "rgba(38,198,218,0.15)" : "transparent",
+            border: tab === 'dispositivos' ? "1px solid rgba(38,198,218,0.4)" : "1px solid transparent",
+            cursor: "pointer",
+          }}
+        >
+          <Smartphone size={13} color={tab === 'dispositivos' ? "#80DEEA" : "rgba(255,255,255,0.4)"} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: tab === 'dispositivos' ? "#80DEEA" : "rgba(255,255,255,0.4)" }}>Dispositivos</span>
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-3 py-8 justify-center">
+          <div className="rounded-full" style={{ width: 20, height: 20, border: "2px solid rgba(255,255,255,0.1)", borderTop: "2px solid #4CAF50", animation: "spin 0.8s linear infinite" }} />
+          <span className="text-white/40" style={{ fontSize: 13 }}>Cargando…</span>
+        </div>
+      ) : tab === 'pendientes' ? (
+        pendientes.length === 0 ? (
+          <div className="rounded-xl px-6 py-10 text-center" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <ShieldCheck size={28} color="rgba(255,255,255,0.2)" style={{ margin: "0 auto 10px" }} />
+            <p className="text-white/30" style={{ fontSize: 13 }}>No hay solicitudes pendientes</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {pendientes.map((r) => (
+              <div
+                key={r.id}
+                className="rounded-2xl p-5 flex items-center justify-between"
+                style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.08)" }}
+              >
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 40, height: 40, background: "rgba(76,175,80,0.15)" }}>
+                    <ShieldCheck size={18} color="#81C784" />
+                  </div>
+                  <div>
+                    <p className="text-white font-bold" style={{ fontSize: 15 }}>{r.full_name}</p>
+                    <p className="text-white/50" style={{ fontSize: 12, marginTop: 2 }}>
+                      Sector: <span className="text-white/80 font-semibold">{r.sector_name}</span>
+                      {r.phone_model ? <> · {r.phone_model}</> : null}
+                    </p>
+                    <p className="text-white/30" style={{ fontSize: 11, marginTop: 2 }}>{formatFechaHora(r.created_at)}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {r.latitude != null && r.longitude != null && (
+                    <button
+                      onClick={() => abrirMapa(r.latitude!, r.longitude!)}
+                      title="Ver ubicación en Google Maps"
+                      className="flex items-center justify-center rounded-xl transition-colors hover:bg-white/10"
+                      style={{ width: 38, height: 38, background: "rgba(38,198,218,0.1)", border: "1px solid rgba(38,198,218,0.25)", cursor: "pointer" }}
+                    >
+                      <MapPin size={16} color="#26C6DA" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => rechazar(r.id)}
+                    disabled={busyId === r.id}
+                    className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl transition-colors hover:bg-red-500/10"
+                    style={{ background: "rgba(255,82,82,0.08)", border: "1px solid rgba(255,82,82,0.25)", cursor: busyId === r.id ? "not-allowed" : "pointer", opacity: busyId === r.id ? 0.5 : 1 }}
+                  >
+                    <X size={14} color="#FF5252" />
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#FF5252" }}>Rechazar</span>
+                  </button>
+                  <button
+                    onClick={() => autorizar(r.id)}
+                    disabled={busyId === r.id}
+                    className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl transition-all hover:opacity-90 active:scale-95"
+                    style={{ background: "linear-gradient(135deg, #4CAF50, #2E7D32)", border: "none", cursor: busyId === r.id ? "not-allowed" : "pointer", opacity: busyId === r.id ? 0.5 : 1 }}
+                  >
+                    <ShieldCheck size={14} color="#fff" />
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>Autorizar</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      ) : dispositivos.length === 0 ? (
+        <div className="rounded-xl px-6 py-10 text-center" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+          <Smartphone size={28} color="rgba(255,255,255,0.2)" style={{ margin: "0 auto 10px" }} />
+          <p className="text-white/30" style={{ fontSize: 13 }}>No hay dispositivos registrados todavía</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {dispositivos.map((d) => (
+            <div
+              key={d.id}
+              className="rounded-2xl p-5 flex items-center justify-between"
+              style={{
+                background: "#2A2A3E",
+                border: d.revoked ? "1px solid rgba(255,82,82,0.35)" : "1px solid rgba(255,255,255,0.08)",
+                opacity: d.revoked ? 0.75 : 1,
+              }}
+            >
+              <div className="flex items-center gap-4">
+                <div className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 40, height: 40, background: d.is_master ? "rgba(255,193,7,0.15)" : "rgba(156,39,176,0.15)" }}>
+                  {d.is_master ? <Crown size={18} color="#FFC107" /> : <Smartphone size={18} color="#C86FE8" />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-white font-bold" style={{ fontSize: 15 }}>{d.encargado_name}</p>
+                    {d.is_master && (
+                      <span className="px-2 py-0.5 rounded-full" style={{ fontSize: 9, fontWeight: 700, background: "rgba(255,193,7,0.15)", color: "#FFC107" }}>MAESTRO</span>
+                    )}
+                    {d.revoked && (
+                      <span className="px-2 py-0.5 rounded-full" style={{ fontSize: 9, fontWeight: 700, background: "rgba(255,82,82,0.15)", color: "#FF5252" }}>REVOCADO</span>
+                    )}
+                  </div>
+                  <p className="text-white/50" style={{ fontSize: 12, marginTop: 2 }}>
+                    Sector: <span className="text-white/80 font-semibold">{d.sector_name ?? '—'}</span>
+                    {d.phone_model ? <> · {d.phone_model}</> : null}
+                  </p>
+                  <p className="text-white/30" style={{ fontSize: 11, marginTop: 2 }}>Desde {formatFechaHora(d.created_at)}</p>
+                </div>
+              </div>
+              {!d.is_master && (
+                <button
+                  onClick={() => toggleRevocado(d)}
+                  disabled={busyId === d.id}
+                  className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl transition-colors"
+                  style={{
+                    background: d.revoked ? "rgba(76,175,80,0.1)" : "rgba(255,82,82,0.08)",
+                    border: d.revoked ? "1px solid rgba(76,175,80,0.3)" : "1px solid rgba(255,82,82,0.25)",
+                    cursor: busyId === d.id ? "not-allowed" : "pointer",
+                    opacity: busyId === d.id ? 0.5 : 1,
+                  }}
+                >
+                  <Ban size={14} color={d.revoked ? "#81C784" : "#FF5252"} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: d.revoked ? "#81C784" : "#FF5252" }}>
+                    {d.revoked ? 'Restaurar acceso' : 'Revocar acceso'}
+                  </span>
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1656,7 +1998,8 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
 export default function App() {
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [filter, setFilter] = useState("Todos");
-  const [activePanel, setActivePanel] = useState<'sectores' | 'informes'>('sectores');
+  const [activePanel, setActivePanel] = useState<'sectores' | 'informes' | 'accesos'>('sectores');
+  const [pendingAccessCount, setPendingAccessCount] = useState(0);
   const [selectedSector, setSelectedSector] = useState<Sector | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
@@ -2037,6 +2380,30 @@ export default function App() {
        fetchGlobalStats();
     }
   }, [sectors]);
+
+  // Contador de solicitudes de autorización pendientes — se actualiza solo,
+  // así el número en la pestaña avisa aunque no estés parado ahí.
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const fetchPendingCount = async () => {
+      try {
+        const res = await fetch(
+          "https://staffaxis-new-version-production.up.railway.app/api/admin/access-requests?status=pending",
+          { headers: getHeaders() }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setPendingAccessCount(Array.isArray(data.requests) ? data.requests.length : 0);
+        }
+      } catch (e) {
+        console.error("[Accesos] error al chequear pendientes:", e);
+      }
+    };
+    fetchPendingCount();
+    const interval = setInterval(fetchPendingCount, 30000);
+    return () => clearInterval(interval);
+  }, [isLoggedIn]);
+
   const handleCreateAdmin = async () => {
     if (!newAdminUser || !newAdminPass) return setCreationError("Completá todos los campos");
     setCreationLoading(true); setCreationError("");
@@ -2429,6 +2796,30 @@ export default function App() {
                   <BarChart3 size={13} color={activePanel === 'informes' ? "#80DEEA" : "rgba(255,255,255,0.4)"} />
                   <span style={{ fontSize: 12, fontWeight: 600, color: activePanel === 'informes' ? "#80DEEA" : "rgba(255,255,255,0.4)" }}>Panel de Informes</span>
                 </button>
+                <button
+                  onClick={() => setActivePanel('accesos')}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all relative"
+                  style={{
+                    background: activePanel === 'accesos' ? "rgba(76,175,80,0.15)" : "transparent",
+                    border: activePanel === 'accesos' ? "1px solid rgba(76,175,80,0.4)" : "1px solid transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  <ShieldCheck size={13} color={activePanel === 'accesos' ? "#81C784" : "rgba(255,255,255,0.4)"} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: activePanel === 'accesos' ? "#81C784" : "rgba(255,255,255,0.4)" }}>Solicitudes de Autorización</span>
+                  {pendingAccessCount > 0 && (
+                    <span
+                      style={{
+                        fontSize: 10, fontWeight: 700, color: "#fff",
+                        background: "#FF5252", borderRadius: 999,
+                        minWidth: 16, height: 16, padding: "0 4px",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}
+                    >
+                      {pendingAccessCount}
+                    </span>
+                  )}
+                </button>
               </div>
               {/* Refresh — only visible on Sectores panel */}
               {activePanel === 'sectores' && (
@@ -2450,6 +2841,8 @@ export default function App() {
             <div className="sa-scroll flex-1 overflow-y-auto pt-6 pb-8" style={{ minHeight: 0 }}>
             {activePanel === 'informes' ? (
               <PanelInformes apiSectors={sectors} />
+            ) : activePanel === 'accesos' ? (
+              <PanelAccesos onPendingCountChange={setPendingAccessCount} />
             ) : isLoading ? (
               /* CircularProgressIndicator equivalent */
               <div className="flex-1 flex flex-col items-center justify-center gap-4" style={{ minHeight: 320 }}>
