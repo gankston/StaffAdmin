@@ -722,7 +722,10 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
       onClick={(e) => e.stopPropagation()}
     >
       <div style={{ height: 4, background: "linear-gradient(90deg, #9C27B0, #26C6DA)", flexShrink: 0 }} />
-      <div className="p-7 flex flex-col" style={{ minHeight: 0, overflow: "hidden" }}>
+      {/* overflow auto (no hidden): en pantallas bajas o con escalado de Windows al
+          125/150% el contenido no entra en el 90vh y antes se recortaba sin manera de
+          llegar a los botones de abajo. */}
+      <div className="p-7 flex flex-col" style={{ minHeight: 0, overflow: "auto" }}>
         <div className="flex items-start justify-between mb-5" style={{ flexShrink: 0 }}>
           <div>
             <h3 className="text-white" style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.01em" }}>{sector.name}</h3>
@@ -769,29 +772,16 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
           </div>
         </div>
 
-        {/* Stats counters */}
-        <div className="grid grid-cols-3 gap-2.5 mb-5" style={{ flexShrink: 0 }}>
+        {/* Stats counters — en una linea: el alto que sobra va a la tabla */}
+        <div className="grid grid-cols-3 gap-2 mb-3" style={{ flexShrink: 0 }}>
           {[
-            {
-              l: "Registrados",
-              v: empLoading ? "—" : employees.length.toLocaleString(),
-              sub: "total"
-            },
-            {
-              l: "Activos",
-              v: empLoading ? "—" : employees.filter((e: Employee) => e.is_active).length.toLocaleString(),
-              sub: "en nómina"
-            },
-            {
-              l: "Totales",
-              v: previewLoading ? "—" : previewAttendances.length.toLocaleString(),
-              sub: "asistencias"
-            },
+            { l: "Registrados", v: empLoading ? "—" : employees.length.toLocaleString() },
+            { l: "Activos", v: empLoading ? "—" : employees.filter((e: Employee) => e.is_active).length.toLocaleString() },
+            { l: "Asistencias", v: previewLoading ? "—" : previewAttendances.length.toLocaleString() },
           ].map((s) => (
-            <div key={s.l} className="rounded-2xl px-3.5 py-3" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}>
-              <p style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", letterSpacing: "0.09em", textTransform: "uppercase", marginBottom: 4 }}>{s.l}</p>
-              <p className="text-white" style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>{s.v}</p>
-              <p style={{ fontSize: 9, color: "rgba(255,255,255,0.25)", marginTop: 2 }}>{s.sub}</p>
+            <div key={s.l} className="rounded-xl px-3 py-2 flex items-baseline gap-2" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}>
+              <span className="text-white" style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em" }}>{s.v}</span>
+              <span style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", letterSpacing: "0.09em", textTransform: "uppercase" }}>{s.l}</span>
             </div>
           ))}
         </div>
@@ -813,15 +803,28 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
             )}
           </div>
 
-          <div className="mb-3 px-3 py-1.5 rounded-xl flex items-center gap-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
-            <Search size={12} color="rgba(255,255,255,0.4)" />
-            <input
-              placeholder="Buscar empleado..."
-              value={localSearch}
-              onChange={e => setLocalSearch(e.target.value)}
-              className="bg-transparent outline-none w-full text-white placeholder-white/30"
-              style={{ fontSize: 12 }}
-            />
+          {/* Buscador + alta de empleado en la misma fila */}
+          <div className="mb-2 flex items-stretch gap-2" style={{ flexShrink: 0 }}>
+            <div className="px-3 py-1.5 rounded-xl flex items-center gap-2 flex-1" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <Search size={12} color="rgba(255,255,255,0.4)" />
+              <input
+                placeholder="Buscar empleado..."
+                value={localSearch}
+                onChange={e => setLocalSearch(e.target.value)}
+                className="bg-transparent outline-none w-full text-white placeholder-white/30"
+                style={{ fontSize: 12 }}
+              />
+            </div>
+            {isAdmin && (
+              <button
+                onClick={onCreateEmployee}
+                title="Agregar empleado a este sector"
+                className="flex items-center gap-1.5 px-3 rounded-xl transition-all hover:bg-white/10 flex-shrink-0"
+                style={{ background: "rgba(156,39,176,0.15)", border: "1px dashed rgba(156,39,176,0.4)", cursor: "pointer", color: "#C86FE8", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+              >
+                + Agregar empleado
+              </button>
+            )}
           </div>
 
           {empLoading ? (
@@ -836,7 +839,9 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
           ) : (
             <div
               className="sa-table-scroll rounded-xl"
-              style={{ flex: 1, minHeight: 0, overflow: "auto", border: "1px solid rgba(255,255,255,0.08)", background: "#26263A" }}
+              // minHeight: sin un piso, "flex: 1" con "minHeight: 0" deja que la tabla se
+              // achique hasta cero cuando falta alto — se veia el encabezado y ninguna fila.
+              style={{ flex: 1, minHeight: 220, overflow: "auto", border: "1px solid rgba(255,255,255,0.08)", background: "#26263A" }}
             >
               <table style={{ borderCollapse: "separate", borderSpacing: 0, width: "max-content", minWidth: "100%" }}>
                 <thead>
@@ -1001,19 +1006,9 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
           )}
         </div>
 
-        <div style={{ height: 1, background: "rgba(255,255,255,0.07)", marginBottom: 20, marginTop: 20, flexShrink: 0 }} />
+        <div style={{ height: 1, background: "rgba(255,255,255,0.07)", marginBottom: 12, marginTop: 12, flexShrink: 0 }} />
 
-        {isAdmin && (
-          <button
-            onClick={onCreateEmployee}
-            className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl transition-all hover:bg-white/10 mb-5"
-            style={{ background: "rgba(156,39,176,0.15)", border: "1px dashed rgba(156,39,176,0.4)", cursor: "pointer", color: "#C86FE8", fontSize: 13, fontWeight: 700, flexShrink: 0 }}
-          >
-            + Agregar Empleado a este Sector
-          </button>
-        )}
-
-        <div className="flex flex-col gap-3 relative" style={{ flexShrink: 0 }}>
+        <div className="flex flex-col gap-2.5 relative" style={{ flexShrink: 0 }}>
 
           {/* Tooltip implementation */}
           {isMissing && showTooltip && (
@@ -1036,72 +1031,71 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
             </div>
           )}
 
-          {/* Period selector ─── Tarea 1: Período 21→20 */}
-          <div className="mb-4">
-            <p className="text-white/40 font-semibold uppercase tracking-wider mb-2" style={{ fontSize: 10 }}>Período de exportación</p>
-            <div className="flex gap-2">
-              <select
-                value={periodMonth}
-                onChange={(e) => setPeriodMonth(Number(e.target.value))}
-                className="flex-1 rounded-xl px-3 py-2 text-white font-semibold appearance-none"
-                style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 13, cursor: "pointer", outline: "none" }}
-              >
-                {['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
-                  .map((m, i, arr) => {
-                    const prevMonth = arr[i === 0 ? 11 : i - 1];
-                    return (
-                      <option key={m} value={i + 1} style={{ background: "#2A2A3E" }}>
-                        21 {prevMonth.substring(0,3)} - 20 {m.substring(0,3)} ({m})
-                      </option>
-                    );
-                  })}
-              </select>
-              <select
-                value={periodYear}
-                onChange={(e) => setPeriodYear(Number(e.target.value))}
-                className="rounded-xl px-3 py-2 text-white font-semibold appearance-none"
-                style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 13, cursor: "pointer", outline: "none", width: 90 }}
-              >
-                {[2024, 2025, 2026, 2027].map((y) => <option key={y} value={y} style={{ background: "#2A2A3E" }}>{y}</option>)}
-              </select>
-            </div>
-            <div className="mt-3 p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.15)" }}>
-              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.8)", lineHeight: 1.5, textAlign: "center" }}>
-                Estás por exportar las horas del <strong className="text-white font-bold tracking-wide">21/{String(periodMonth === 1 ? 12 : periodMonth - 1).padStart(2, '0')}/{periodMonth === 1 ? periodYear - 1 : periodYear}</strong> al <strong className="text-white font-bold tracking-wide">20/{String(periodMonth).padStart(2, '0')}/{periodYear}</strong>.
-              </p>
-            </div>
+          {/* Periodo de exportacion (21 -> 20) */}
+          <div className="flex items-center gap-2">
+            <span className="text-white/40 font-semibold uppercase tracking-wider flex-shrink-0" style={{ fontSize: 10 }}>Período</span>
+            <select
+              value={periodMonth}
+              onChange={(e) => setPeriodMonth(Number(e.target.value))}
+              className="flex-1 rounded-xl px-3 py-1.5 text-white font-semibold appearance-none"
+              style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 12, cursor: "pointer", outline: "none" }}
+            >
+              {['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+                .map((m, i, arr) => {
+                  const prevMonth = arr[i === 0 ? 11 : i - 1];
+                  return (
+                    <option key={m} value={i + 1} style={{ background: "#2A2A3E" }}>
+                      21 {prevMonth.substring(0,3)} - 20 {m.substring(0,3)} ({m})
+                    </option>
+                  );
+                })}
+            </select>
+            <select
+              value={periodYear}
+              onChange={(e) => setPeriodYear(Number(e.target.value))}
+              className="rounded-xl px-3 py-1.5 text-white font-semibold appearance-none flex-shrink-0"
+              style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 12, cursor: "pointer", outline: "none", width: 84 }}
+            >
+              {[2024, 2025, 2026, 2027].map((y) => <option key={y} value={y} style={{ background: "#2A2A3E" }}>{y}</option>)}
+            </select>
+            <span className="flex-shrink-0" style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", whiteSpace: "nowrap" }}>
+              21/{String(periodMonth === 1 ? 12 : periodMonth - 1).padStart(2, '0')} → 20/{String(periodMonth).padStart(2, '0')}
+            </span>
           </div>
 
-          <button
-            onClick={handleShowLocation}
-            disabled={locatingTarja}
-            className={`flex items-center justify-center gap-2.5 w-full py-3 rounded-xl transition-all mb-3 ${!locatingTarja ? 'hover:opacity-90 active:scale-[0.98]' : 'opacity-50 cursor-not-allowed'}`}
-            style={{ background: "rgba(38,198,218,0.15)", border: "1px solid rgba(38,198,218,0.4)", cursor: locatingTarja ? "not-allowed" : "pointer" }}
-          >
-            {locatingTarja
-              ? <div className="rounded-full" style={{ width: 14, height: 14, border: "2px solid rgba(38,198,218,0.3)", borderTop: "2px solid #26C6DA", animation: "spin 0.8s linear infinite" }} />
-              : <MapPin size={16} color="#26C6DA" />}
-            <span style={{ color: "#26C6DA", fontSize: 13, fontWeight: 700 }}>
-              {locatingTarja ? "Buscando..." : "Mostrar ubicación"}
-            </span>
-          </button>
-
-          <div
-            onMouseEnter={() => isMissing && setShowTooltip(true)}
-            onMouseLeave={() => setShowTooltip(false)}
-            className="w-full"
-          >
+          {/* Acciones lado a lado: exportar es la principal, por eso mas ancha */}
+          <div className="flex gap-2">
             <button
-              onClick={handleExport}
-              // Eliminamos booleanos de disabled para probar el modal con click siempre
-              disabled={exporting || empLoading}
-              className={`flex items-center justify-center gap-2.5 w-full py-3.5 rounded-2xl transition-all ${!exporting ? 'hover:opacity-90 active:scale-[0.98]' : 'opacity-50 cursor-not-allowed'}`}
-              style={{ background: "linear-gradient(135deg, #4CAF50, #2E7D32)", border: "none", cursor: exporting ? "not-allowed" : "pointer", boxShadow: "0 6px 22px rgba(76,175,80,0.3)" }}
+              onClick={handleShowLocation}
+              disabled={locatingTarja}
+              className={`flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all ${!locatingTarja ? 'hover:opacity-90 active:scale-[0.98]' : 'opacity-50 cursor-not-allowed'}`}
+              style={{ flex: 1, background: "rgba(38,198,218,0.15)", border: "1px solid rgba(38,198,218,0.4)", cursor: locatingTarja ? "not-allowed" : "pointer" }}
             >
-              {exporting
-                ? <><div className="rounded-full" style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.2)", borderTop: "2px solid #fff", animation: "spin 0.8s linear infinite" }} /><span className="text-white" style={{ fontSize: 13, fontWeight: 700 }}>Exportando...</span></>
-                : <><FileSpreadsheet size={16} color="#fff" /><span className="text-white" style={{ fontSize: 13, fontWeight: 700 }}>Exportar en Excel</span></>}
+              {locatingTarja
+                ? <div className="rounded-full" style={{ width: 14, height: 14, border: "2px solid rgba(38,198,218,0.3)", borderTop: "2px solid #26C6DA", animation: "spin 0.8s linear infinite" }} />
+                : <MapPin size={15} color="#26C6DA" />}
+              <span style={{ color: "#26C6DA", fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap" }}>
+                {locatingTarja ? "Buscando..." : "Mostrar ubicación"}
+              </span>
             </button>
+
+            <div
+              onMouseEnter={() => isMissing && setShowTooltip(true)}
+              onMouseLeave={() => setShowTooltip(false)}
+              style={{ flex: 1.7 }}
+            >
+              <button
+                onClick={handleExport}
+                // Eliminamos booleanos de disabled para probar el modal con click siempre
+                disabled={exporting || empLoading}
+                className={`flex items-center justify-center gap-2.5 w-full py-2.5 rounded-xl transition-all ${!exporting ? 'hover:opacity-90 active:scale-[0.98]' : 'opacity-50 cursor-not-allowed'}`}
+                style={{ background: "linear-gradient(135deg, #4CAF50, #2E7D32)", border: "none", cursor: exporting ? "not-allowed" : "pointer", boxShadow: "0 4px 16px rgba(76,175,80,0.28)" }}
+              >
+                {exporting
+                  ? <><div className="rounded-full" style={{ width: 15, height: 15, border: "2px solid rgba(255,255,255,0.2)", borderTop: "2px solid #fff", animation: "spin 0.8s linear infinite" }} /><span className="text-white" style={{ fontSize: 13, fontWeight: 700 }}>Exportando...</span></>
+                  : <><FileSpreadsheet size={16} color="#fff" /><span className="text-white" style={{ fontSize: 13, fontWeight: 700 }}>Exportar en Excel</span></>}
+              </button>
+            </div>
           </div>
         </div>
       </div>
