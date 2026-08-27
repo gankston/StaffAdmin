@@ -48,6 +48,7 @@ import {
   Ban,
   Smartphone,
   Crown,
+  Users,
 } from "lucide-react";
 
 
@@ -391,6 +392,11 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
   const [previewAttendances, setPreviewAttendances] = useState<any[]>([]);
   const [previewLoading, setPreviewLoading] = useState(true);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  // Día que se está mirando en el cartel de estado de aprobación (arranca en hoy)
+  const [diaEstado, setDiaEstado] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -445,12 +451,38 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     return map;
   })();
 
+  // Resumen compacto de los tipos de carga nuevos (columnas propias) para la celda del día.
+  const datosExtraCompacto = (rec: Record<string, any> | null | undefined): string => {
+    if (!rec) return '';
+    const partes: string[] = [];
+    if (rec.km_viajes) partes.push(`Km${rec.km_viajes}`);
+    if (rec.has_fumigadas) partes.push(`Ha${rec.has_fumigadas}`);
+    if (rec.siembra_trilla) partes.push(`ST${rec.siembra_trilla}`);
+    if (rec.bolseros) partes.push(`Bol${rec.bolseros}`);
+    if (rec.etiquetado) partes.push(`Et${rec.etiquetado}`);
+    if (rec.carga_camion_kg50 || rec.carga_camion_kg25 || rec.carga_camion_otro) partes.push('CC');
+    if (rec.movimiento_estiba_kg50 || rec.movimiento_estiba_kg25 || rec.movimiento_estiba_otro) partes.push('ME');
+    return partes.join(' ');
+  };
+
   // Determina color + texto de una celda día según el valor registrado.
   // La cosecha es un número plano (cantidad de tarjas/unidades), no kg — se muestra "C {numero}".
   // Las horas llevan prefijo "H " desde la app; rec.hours ya viene parseado correctamente por apiClient.ts.
   const renderDayCell = (rec: any) => {
     if (!rec) return { bg: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.2)", text: "—" };
     const workValue: string = rec.work_value != null ? String(rec.work_value) : "";
+    const extraSuffix = datosExtraCompacto(rec);
+    // Estado de aprobación: en vez de un símbolo (que no se entendía), la celda
+    // pendiente se pinta de naranja y la rechazada se tacha con ✕.
+    const pendiente = rec.status === 'pending';
+    const rechazada = rec.status === 'rejected';
+    const bgRech = "rgba(239,83,80,0.75)";
+    const estadoSuffix = rec.status === 'rejected' ? '✕'
+      : (rec.status === 'approved' && rec.aprobada_por_nombre) ? '✓' : '';
+    const bgPend = "rgba(255,152,0,0.55)";
+    const conExtra = (t: string) => [t, extraSuffix, estadoSuffix].filter(Boolean).join(' ');
+    // La rechazada manda sobre cualquier otro color: tiene que saltar a la vista.
+    const fondo = (normal: string) => rechazada ? bgRech : pendiente ? bgPend : normal;
     if (workValue.includes('|')) {
       const partes: string[] = [];
       for (const seg of workValue.split('|').slice(1)) {
@@ -467,25 +499,80 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
           if (cajonesM) partes.push(`Cn ${cajonesM[1]}`);
         }
       }
-      return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: partes.length > 0 ? partes.join(' ') : '•' };
+      return { bg: fondo("rgba(38,198,218,0.35)"), color: "#fff", text: conExtra(partes.length > 0 ? partes.join(' ') : '•') };
     }
-    if (workValue === 'C') return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: "C" };
+    if (workValue === 'C') return { bg: fondo("rgba(38,198,218,0.35)"), color: "#fff", text: conExtra("C") };
     if (workValue.startsWith('$')) {
       const num = parseFloat(workValue.slice(1).replace(',', '.'));
-      return { bg: "rgba(38,198,218,0.35)", color: "#fff", text: `$ ${!isNaN(num) ? num.toLocaleString('es') : ''}`.trim() };
+      return { bg: fondo("rgba(38,198,218,0.35)"), color: "#fff", text: conExtra(`$ ${!isNaN(num) ? num.toLocaleString('es') : ''}`.trim()) };
     }
     const hours = rec.hours;
     if (hours === null || hours === undefined || hours === 0) {
-      return { bg: "rgba(239,83,80,0.55)", color: "#fff", text: "0" };
+      return { bg: fondo("rgba(239,83,80,0.55)"), color: "#fff", text: conExtra("0") };
     }
-    if (hours >= 7) return { bg: "rgba(76,175,80,0.55)", color: "#fff", text: String(Math.round(hours)) };
-    return { bg: "rgba(255,193,7,0.55)", color: "#1E1E2E", text: String(Math.round(hours * 10) / 10) };
+    if (hours >= 7) return { bg: fondo("rgba(76,175,80,0.55)"), color: "#fff", text: conExtra(String(Math.round(hours))) };
+    return { bg: fondo("rgba(255,193,7,0.55)"), color: "#1E1E2E", text: conExtra(String(Math.round(hours * 10) / 10)) };
+  };
+
+  // ── Estado de aprobación de la tarja del día que se está mirando ──────────
+  // Desde esta fecha en adelante existe el registro de quién aprobó cada tarja.
+  // Para días anteriores no hay dato y no tiene sentido mostrar el cartel.
+  const FECHA_CORTE_APROBACION = '2026-08-25';
+
+  const estadoTarjaDia = (() => {
+    // La vista previa solo trae el período elegido abajo; fuera de ese rango no hay
+    // datos cargados y decir "sin tarja" sería mentira.
+    const { startDate: iniPeriodo, endDate: finPeriodo } = computePeriodRange(periodMonth, periodYear);
+    if (diaEstado < iniPeriodo || diaEstado > finPeriodo) {
+      return { tipo: 'sin_dato' as const, texto: 'Fuera del período seleccionado abajo', color: '#78909C' };
+    }
+    if (diaEstado < FECHA_CORTE_APROBACION) {
+      return { tipo: 'sin_dato' as const, texto: 'Sin datos de aprobación para este día', color: '#78909C' };
+    }
+    const delDia = previewAttendances.filter(a => a.date && String(a.date).startsWith(diaEstado));
+    if (delDia.length === 0) {
+      return { tipo: 'sin_tarja' as const, texto: 'Sin tarja cargada este día', color: '#78909C' };
+    }
+    const aprobadas = delDia.filter(a => a.status === 'approved' && a.aprobada_por_nombre);
+    const rechazadas = delDia.filter(a => a.status === 'rejected');
+    const pendientes = delDia.filter(a => a.status === 'pending');
+    const quien = aprobadas[0]?.aprobada_por_nombre ?? rechazadas[0]?.aprobada_por_nombre ?? '';
+
+    if (aprobadas.length === delDia.length) {
+      return { tipo: 'aprobada' as const, texto: `Aprobada por ${quien}`, color: '#4CAF50' };
+    }
+    if (aprobadas.length === 0 && pendientes.length === 0 && rechazadas.length === 0) {
+      // Todas auto-aprobadas: este sector no requiere aprobación de supervisor
+      return { tipo: 'sin_dato' as const, texto: 'Este sector no requiere aprobación', color: '#78909C' };
+    }
+    if (aprobadas.length > 0) {
+      return {
+        tipo: 'parcial' as const,
+        texto: `Parcialmente aprobada por ${quien} — ${aprobadas.length} de ${delDia.length}`,
+        color: '#FFA726',
+      };
+    }
+    return {
+      tipo: 'no_aprobada' as const,
+      texto: rechazadas.length > 0
+        ? `Rechazada por ${quien || 'el supervisor'}`
+        : `Sin aprobar — ${pendientes.length} pendiente${pendientes.length > 1 ? 's' : ''}`,
+      color: '#EF5350',
+    };
+  })();
+
+  const cambiarDia = (delta: number) => {
+    const [y, m, d] = diaEstado.split('-').map(Number);
+    const nueva = new Date(Date.UTC(y, m - 1, d + delta));
+    setDiaEstado(nueva.toISOString().slice(0, 10));
   };
 
   // Total del período por empleado — cuenta horas + cosecha + cajas + cajones + importe, no solo horas.
   // Mismo criterio que exportExcel.ts para que el total coincida con el del Excel.
   const computeEmployeeTotal = (empMap: Record<string, any>) => {
     let horas = 0, kg = 0, importe = 0, cajas = 0, cajones = 0;
+    // Tipos de carga nuevos: los numéricos se suman, camión/estiba se cuentan como días
+    let km = 0, ha = 0, st = 0, bol = 0, et = 0, diasCC = 0, diasME = 0;
     const parseHorasSegment = (seg: string): number => {
       const s = seg.startsWith('H ') ? seg.slice(2) : seg;
       const n = parseFloat(s);
@@ -519,6 +606,14 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
         const num = parseFloat(workValue);
         if (!isNaN(num)) horas += num;
       }
+      // Tipos nuevos: vienen en columnas propias, no en el texto compuesto.
+      km += Number(rec.km_viajes) || 0;
+      ha += Number(rec.has_fumigadas) || 0;
+      st += Number(rec.siembra_trilla) || 0;
+      bol += Number(rec.bolseros) || 0;
+      et += Number(rec.etiquetado) || 0;
+      if (rec.carga_camion_kg50 || rec.carga_camion_kg25 || rec.carga_camion_otro) diasCC++;
+      if (rec.movimiento_estiba_kg50 || rec.movimiento_estiba_kg25 || rec.movimiento_estiba_otro) diasME++;
     }
     const partes: string[] = [];
     if (horas > 0) partes.push(`${horas}H`);
@@ -527,6 +622,13 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
       partes.push([cajas > 0 ? `Cajas ${cajas}` : '', cajones > 0 ? `Cajones ${cajones}` : ''].filter(Boolean).join(' '));
     }
     if (importe > 0) partes.push(`$${importe.toLocaleString('es')}`);
+    if (km > 0) partes.push(`Km ${km}`);
+    if (ha > 0) partes.push(`Ha ${ha}`);
+    if (st > 0) partes.push(`S/T ${st}`);
+    if (bol > 0) partes.push(`Bolseros ${bol}`);
+    if (et > 0) partes.push(`Etiquetado ${et}`);
+    if (diasCC > 0) partes.push(`Carga Camión ${diasCC}d`);
+    if (diasME > 0) partes.push(`Mov. Estiba ${diasME}d`);
     return partes.length > 0 ? partes.join(' | ') : '—';
   };
 
@@ -770,6 +872,42 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
               <X size={15} color="rgba(255,255,255,0.6)" />
             </button>
           </div>
+        </div>
+
+        {/* Estado de aprobación de la tarja del día, con navegación día a día */}
+        <div
+          className="rounded-xl px-3 py-2 mb-2 flex items-center gap-3"
+          style={{
+            flexShrink: 0,
+            background: `${estadoTarjaDia.color}22`,
+            border: `1px solid ${estadoTarjaDia.color}66`,
+          }}
+        >
+          <div className="flex items-center gap-1" style={{ flexShrink: 0 }}>
+            <button
+              onClick={() => cambiarDia(-1)}
+              title="Día anterior"
+              className="rounded-lg flex items-center justify-center transition-all hover:bg-white/10"
+              style={{ width: 26, height: 26, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer", color: "#fff", fontSize: 14 }}
+            >‹</button>
+            <input
+              type="date"
+              value={diaEstado}
+              onChange={e => e.target.value && setDiaEstado(e.target.value)}
+              className="rounded-lg px-2"
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 11, height: 26, colorScheme: "dark", cursor: "pointer" }}
+            />
+            <button
+              onClick={() => cambiarDia(1)}
+              title="Día siguiente"
+              className="rounded-lg flex items-center justify-center transition-all hover:bg-white/10"
+              style={{ width: 26, height: 26, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer", color: "#fff", fontSize: 14 }}
+            >›</button>
+          </div>
+          <div className="rounded-full" style={{ width: 9, height: 9, background: estadoTarjaDia.color, flexShrink: 0 }} />
+          <span style={{ fontSize: 12, fontWeight: 700, color: estadoTarjaDia.color, letterSpacing: "0.01em" }}>
+            {estadoTarjaDia.texto}
+          </span>
         </div>
 
         {/* Stats counters — en una linea: el alto que sobra va a la tabla */}
@@ -1392,13 +1530,17 @@ const ACCESOS_API_BASE = "https://staffaxis-new-version-production.up.railway.ap
 interface AccessRequest {
   id: string;
   full_name: string;
-  sector_name: string;
+  sector_name: string | null;
   phone_model: string | null;
   latitude: number | null;
   longitude: number | null;
   status: string;
   authorized_by: string | null;
   created_at: string;
+  // Una fila puede ser un pedido de encargado (tipo=empleado, sector_name) o de
+  // supervisor (tipo=supervisor, sectores_supervisor con toda su lista de sectores).
+  tipo: 'empleado' | 'supervisor';
+  sectores_supervisor: string[];
 }
 
 interface AccessDevice {
@@ -1569,13 +1711,29 @@ function PanelAccesos({ onPendingCountChange }: { onPendingCountChange: (n: numb
                 style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.08)" }}
               >
                 <div className="flex items-center gap-4">
-                  <div className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 40, height: 40, background: "rgba(76,175,80,0.15)" }}>
-                    <ShieldCheck size={18} color="#81C784" />
+                  <div
+                    className="flex items-center justify-center rounded-full flex-shrink-0"
+                    style={{ width: 40, height: 40, background: r.tipo === 'supervisor' ? "rgba(156,39,176,0.18)" : "rgba(76,175,80,0.15)" }}
+                  >
+                    {r.tipo === 'supervisor'
+                      ? <Users size={18} color="#C86FE8" />
+                      : <ShieldCheck size={18} color="#81C784" />}
                   </div>
                   <div>
-                    <p className="text-white font-bold" style={{ fontSize: 15 }}>{r.full_name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-white font-bold" style={{ fontSize: 15 }}>{r.full_name}</p>
+                      {r.tipo === 'supervisor' && (
+                        <span
+                          style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", color: "#C86FE8", background: "rgba(156,39,176,0.15)", border: "1px solid rgba(156,39,176,0.35)", borderRadius: 999, padding: "2px 8px" }}
+                        >
+                          SUPERVISOR
+                        </span>
+                      )}
+                    </div>
                     <p className="text-white/50" style={{ fontSize: 12, marginTop: 2 }}>
-                      Sector: <span className="text-white/80 font-semibold">{r.sector_name}</span>
+                      {r.tipo === 'supervisor'
+                        ? <>Sectores: <span className="text-white/80 font-semibold">{r.sectores_supervisor.join(', ') || '(sin sectores asignados)'}</span></>
+                        : <>Sector: <span className="text-white/80 font-semibold">{r.sector_name}</span></>}
                       {r.phone_model ? <> · {r.phone_model}</> : null}
                     </p>
                     <p className="text-white/30" style={{ fontSize: 11, marginTop: 2 }}>{formatFechaHora(r.created_at)}</p>

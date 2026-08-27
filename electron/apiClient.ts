@@ -79,9 +79,30 @@ export interface ApiAttendance {
     first_name?: string;   // may be joined from employees table
     last_name?: string;
     dni?: string | null;
+    // false = el empleado esta dado de baja. Igual aparece en el reporte si
+    // trabajo dentro del periodo, porque esas horas se liquidan.
+    is_active?: boolean | null;
     latitude?: number | null;
     longitude?: number | null;
     submitted_at?: string | null;
+    // Tipos de carga nuevos — cada uno con su columna propia en el servidor.
+    // 50/25 son booleanos (el dato ES el peso, no una cantidad).
+    km_viajes?: number | null;
+    has_fumigadas?: number | null;
+    siembra_trilla?: number | null;
+    bolseros?: number | null;
+    etiquetado?: number | null;
+    carga_camion_kg50?: boolean | null;
+    carga_camion_kg25?: boolean | null;
+    carga_camion_otro?: string | null;
+    movimiento_estiba_kg50?: boolean | null;
+    movimiento_estiba_kg25?: boolean | null;
+    movimiento_estiba_otro?: string | null;
+    // Solo vienen cargados si un supervisor reviso la tarja de verdad — en las
+    // auto-aprobadas quedan null, que es como se distingue una de la otra.
+    aprobada_por_nombre?: string | null;
+    aprobada_en?: string | null;
+    motivo_rechazo?: string | null;
     [key: string]: any;    // ignoreUnknownKeys: extra columns are silently ignored
 }
 
@@ -469,9 +490,27 @@ export async function fetchAttendances(
                     last_name: r.last_name,
                     dni: r.dni,
                     notes: r.notes,
+                    // El status ('approved'/'pending'/'rejected') de submissions — se
+                    // reusa este campo, que existia sin usar en esta interfaz.
+                    status: r.status ?? null,
                     latitude: r.latitude ?? null,
                     longitude: r.longitude ?? null,
                     submitted_at: r.submitted_at ?? null,
+                    is_active: r.is_active ?? null,
+                    km_viajes: r.km_viajes ?? null,
+                    has_fumigadas: r.has_fumigadas ?? null,
+                    siembra_trilla: r.siembra_trilla ?? null,
+                    bolseros: r.bolseros ?? null,
+                    etiquetado: r.etiquetado ?? null,
+                    carga_camion_kg50: r.carga_camion_kg50 ?? null,
+                    carga_camion_kg25: r.carga_camion_kg25 ?? null,
+                    carga_camion_otro: r.carga_camion_otro ?? null,
+                    movimiento_estiba_kg50: r.movimiento_estiba_kg50 ?? null,
+                    movimiento_estiba_kg25: r.movimiento_estiba_kg25 ?? null,
+                    movimiento_estiba_otro: r.movimiento_estiba_otro ?? null,
+                    aprobada_por_nombre: r.aprobada_por_nombre ?? null,
+                    aprobada_en: r.aprobada_en ?? null,
+                    motivo_rechazo: r.motivo_rechazo ?? null,
                 };
               })
             : [];
