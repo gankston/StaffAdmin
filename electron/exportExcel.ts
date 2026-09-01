@@ -468,7 +468,11 @@ export async function exportExcel(
         attendances.forEach(a => {
             const empId = String(a.employee_id ?? '');
             if (!empId || employeeIds.has(empId)) return;
-            if (a.dni && empIdsDni.has(a.dni)) return; // matched by DNI
+            // Antes se descartaba si el DNI coincidia con un empleado activo actual,
+            // para no duplicar a la misma persona en dos filas. Pero cuando alguien
+            // termina con DOS fichas de empleado (mismo DNI, dos id distintos — un bug
+            // de creacion que se esta arreglando aparte), este chequeo tapaba horas
+            // reales de la ficha vieja en vez de mostrarlas como corresponde.
             if (!orphanMap.has(empId)) {
                 orphanMap.set(empId, {
                     first_name: a.first_name ?? '',

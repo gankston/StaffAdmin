@@ -174,6 +174,15 @@ function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: 
   const importeTotales = isGlobal ? globalStats.importeTotales : null;
   const cajasTotales = isGlobal ? globalStats.cajasTotales : null;
   const cajonesTotales = isGlobal ? globalStats.cajonesTotales : null;
+  // Tipos de carga nuevos, mismo criterio que el resto: solo tienen sentido en la
+  // vista global (por sector individual se puede agregar despues si hace falta).
+  const kmViajesTotales = isGlobal ? globalStats.kmViajesTotales : null;
+  const hasFumigadasTotales = isGlobal ? globalStats.hasFumigadasTotales : null;
+  const siembraTrillaTotales = isGlobal ? globalStats.siembraTrillaTotales : null;
+  const bolserosTotales = isGlobal ? globalStats.bolserosTotales : null;
+  const etiquetadoTotales = isGlobal ? globalStats.etiquetadoTotales : null;
+  const camionCargas = isGlobal ? globalStats.camionCargas : null;
+  const estibaCargas = isGlobal ? globalStats.estibaCargas : null;
 
   const fmtH = (v: number | null) => v === null ? "—" : v === 0 ? "0H" : v < 1 ? "<1H" : `${Math.round(v)}H`;
   const fmtKg = (v: number | null) => v === null ? "—" : v === 0 ? "0" : v.toLocaleString("es", { maximumFractionDigits: 0 });
@@ -199,6 +208,13 @@ function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: 
         {stat("Cajas", fmtKg(cajasTotales))}
         {stat("Cajones", fmtKg(cajonesTotales))}
         {stat("Importe", fmtPesos(importeTotales))}
+        {stat("Km/Viajes", fmtKg(kmViajesTotales))}
+        {stat("Has Fumigadas", fmtKg(hasFumigadasTotales))}
+        {stat("Siembra/Trilla", fmtKg(siembraTrillaTotales))}
+        {stat("Bolseros", fmtKg(bolserosTotales))}
+        {stat("Etiquetado", fmtKg(etiquetadoTotales))}
+        {stat("Cargas Camión", fmtKg(camionCargas))}
+        {stat("Cargas Estiba", fmtKg(estibaCargas))}
         {stat("Sectores", src.length)}
       </div>
     </div>
@@ -2159,7 +2175,13 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null); // visible error feedback
   
   const [searchQuery, setSearchQuery] = useState("");
-  const [globalStats, setGlobalStats] = useState({ ausentes: 0, horasTotales: 0, cosechaTotales: 0, importeTotales: 0, cajasTotales: 0, cajonesTotales: 0 });
+  const [globalStats, setGlobalStats] = useState({
+    ausentes: 0, horasTotales: 0, cosechaTotales: 0, importeTotales: 0, cajasTotales: 0, cajonesTotales: 0,
+    // Tipos de carga nuevos — cada uno con columna propia en el servidor, se leen
+    // directo de ahi (no hay que reparsear texto como con horas/cosecha/etc).
+    kmViajesTotales: 0, hasFumigadasTotales: 0, siembraTrillaTotales: 0, bolserosTotales: 0, etiquetadoTotales: 0,
+    camionCargas: 0, estibaCargas: 0,
+  });
 
   // Global Employee Search — llama al endpoint /api/admin/employees/search
   const [employeeSearchResults, setEmployeeSearchResults] = useState<{ emp: Employee; sector: Sector }[]>([]);
@@ -2453,6 +2475,7 @@ export default function App() {
       let totalImporte = 0;
       let totalCajas = 0;
       let totalCajones = 0;
+      let totalKm = 0, totalFum = 0, totalSiembra = 0, totalBols = 0, totalEtiq = 0, totalCamion = 0, totalEstiba = 0;
       if (sectors && sectors.length > 0) {
           const parseHorasSegment = (seg: string): number => {
               const s = seg.startsWith('H ') ? seg.slice(2) : seg;
@@ -2461,6 +2484,7 @@ export default function App() {
           };
           const results = await Promise.all(sectors.map(async (sec) => {
               let sH = 0, sC = 0, sI = 0, sCj = 0, sCn = 0;
+              let sKm = 0, sFum = 0, sSiembra = 0, sBols = 0, sEtiq = 0, sCamion = 0, sEstiba = 0;
               const url = `https://staffaxis-new-version-production.up.railway.app/api/admin/report?sector_id=${encodeURIComponent(sec.apiId)}&start_date=${todayStr}&end_date=${todayStr}`;
               try {
                   const res = await fetch(url, { headers });
@@ -2468,6 +2492,14 @@ export default function App() {
                       const data = await res.json();
                       if (data.rows && Array.isArray(data.rows)) {
                           for (const att of data.rows) {
+                              // Tipos nuevos: vienen ya tipados en columnas propias del reporte.
+                              sKm += Number(att.km_viajes) || 0;
+                              sFum += Number(att.has_fumigadas) || 0;
+                              sSiembra += Number(att.siembra_trilla) || 0;
+                              sBols += Number(att.bolseros) || 0;
+                              sEtiq += Number(att.etiquetado) || 0;
+                              if (att.carga_camion_kg50 || att.carga_camion_kg25 || att.carga_camion_otro) sCamion++;
+                              if (att.movimiento_estiba_kg50 || att.movimiento_estiba_kg25 || att.movimiento_estiba_otro) sEstiba++;
                               // La API ya filtra por start_date/end_date, no hace falta revalidar la fecha
                               const val = String(att.minutes_worked ?? "").trim();
                               if (!val || val === "null") continue;
@@ -2511,13 +2543,21 @@ export default function App() {
               } catch(err) {
                   console.error("[Stats] Error for sector", sec.name, err);
               }
-              return { sH, sC, sI, sCj, sCn };
+              return { sH, sC, sI, sCj, sCn, sKm, sFum, sSiembra, sBols, sEtiq, sCamion, sEstiba };
           }));
-          for (const r of results) { totalH += r.sH; totalCosecha += r.sC; totalImporte += r.sI; totalCajas += r.sCj; totalCajones += r.sCn; }
+          for (const r of results) {
+              totalH += r.sH; totalCosecha += r.sC; totalImporte += r.sI; totalCajas += r.sCj; totalCajones += r.sCn;
+              totalKm += r.sKm; totalFum += r.sFum; totalSiembra += r.sSiembra; totalBols += r.sBols; totalEtiq += r.sEtiq;
+              totalCamion += r.sCamion; totalEstiba += r.sEstiba;
+          }
       }
 
       console.log("[Stats] Horas:", totalH, "Cosecha:", totalCosecha, "Importe:", totalImporte, "Cajas:", totalCajas, "Cajones:", totalCajones);
-      setGlobalStats({ ausentes: ausentesCount, horasTotales: totalH, cosechaTotales: totalCosecha, importeTotales: totalImporte, cajasTotales: totalCajas, cajonesTotales: totalCajones });
+      setGlobalStats({
+        ausentes: ausentesCount, horasTotales: totalH, cosechaTotales: totalCosecha, importeTotales: totalImporte, cajasTotales: totalCajas, cajonesTotales: totalCajones,
+        kmViajesTotales: totalKm, hasFumigadasTotales: totalFum, siembraTrillaTotales: totalSiembra, bolserosTotales: totalBols, etiquetadoTotales: totalEtiq,
+        camionCargas: totalCamion, estibaCargas: totalEstiba,
+      });
     } catch (e) {
       console.error("[Stats] Critical error:", e);
     }
