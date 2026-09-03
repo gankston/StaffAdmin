@@ -162,11 +162,21 @@ export async function exportExcel(
             const n = parseFloat(s.replace(',', '.'));
             return isNaN(n) ? 0 : n;
         };
-        const acumularPorDia = (celdas: string[]): void => {
+        // Las celdas del dia ahora pueden ser un numero de Excel puro (dia de solo horas,
+        // sin la "H" que llevaban antes) o el string compuesto de siempre para los dias con
+        // otros tipos de carga. Los dos casos hay que soportarlos aca.
+        const acumularPorDia = (celdas: (string | number)[]): void => {
             celdas.forEach((celda, i) => {
                 const acc = totalesPorDia[i];
-                if (!acc || !celda || celda === 'AUSENTE') return;
-                acc.horas    += numDe(celda.match(/(?:^|\|)\s*([0-9]+(?:[.,][0-9]+)?)H/)?.[1]);
+                if (!acc || celda === '' || celda == null || celda === 'AUSENTE') return;
+                if (typeof celda === 'number') {
+                    // Dia de solo horas: la celda ES el numero, no hay nada mas que sacarle.
+                    acc.horas += celda;
+                    return;
+                }
+                // Las horas van al principio del string, seguidas de espacio, "|" o fin
+                // (ya no llevan "H" atras) — ej. "8 Km 5", "8|C:33", "8|Cajas 23 Cajones 55".
+                acc.horas    += numDe(celda.match(/^([0-9]+(?:[.,][0-9]+)?)(?=\s|\||$)/)?.[1]);
                 acc.cosecha  += numDe(celda.match(/C:([0-9]+(?:[.,][0-9]+)?)/)?.[1]);
                 acc.cajas    += numDe(celda.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/)?.[1]);
                 acc.cajones  += numDe(celda.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/)?.[1]);

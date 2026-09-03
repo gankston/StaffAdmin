@@ -749,11 +749,15 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
         if (result.error === 'Usuario canceló el guardado') {
           console.log('[Export] Cancelado por el usuario.');
         } else {
+          // Antes solo quedaba en la consola: si el Excel fallaba (como paso con el
+          // bug de las celdas numericas) el usuario veia un click que no hacia nada.
           console.error('[Export] Error:', result.error);
+          alert(`No se pudo generar el Excel: ${result.error || 'error desconocido'}`);
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('[Export] IPC error:', err);
+      alert(`No se pudo generar el Excel: ${err?.message || 'error de conexión'}`);
     } finally {
       setExporting(false);
     }
