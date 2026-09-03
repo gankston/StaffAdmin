@@ -332,7 +332,15 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
           e.id === editDialogEmp.id ? { ...e, first_name: editFirst.trim(), last_name: editLast.trim(), dni: editDni.trim() || null } : e
         ));
         setEditDialogEmp(null);
+      } else {
+        // Antes no se avisaba nada acá: si el DNI ya pertenecía a otro empleado
+        // activo, el guardado quedaba colgado en silencio (ni error ni éxito) y
+        // así nacieron fichas duplicadas sin que nadie se diera cuenta.
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || "No se pudo guardar el empleado");
       }
+    } catch {
+      alert("Error de conexión al guardar el empleado");
     } finally {
       setEditSaving(false);
     }

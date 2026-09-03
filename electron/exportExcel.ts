@@ -112,8 +112,10 @@ export async function exportExcel(
             const r = Math.round(n * 100) / 100;
             return Number.isInteger(r) ? String(r) : r.toFixed(2).replace('.', ',');
         };
-        // Celda de total por tipo: "<sigla> <numero>", vacía si no hay dato
-        const celdaTotal = (sigla: string, n: number): string => (n > 0 ? `${sigla} ${fmtNum(n)}` : '');
+        // Celda de total (horas, cosecha, cajas, cajones): numero de Excel puro, sin
+        // sigla ni letra — el nombre de la columna ya dice que es, y asi RRHH lo puede
+        // sumar/multiplicar directo en la planilla sin tener que limpiarlo antes.
+        const celdaTotal = (_sigla: string, n: number): number | string => (n > 0 ? Math.round(n * 100) / 100 : '');
         // "Abonada y Otros" es texto libre (concepto y/o monto): se muestra tal cual se
         // cargo. Por eso no lleva fila de total abajo — sumar texto daria un numero falso.
         const celdaAbonada = (textos: string[]): string => textos.filter(Boolean).join(' | ');
@@ -353,11 +355,11 @@ export async function exportExcel(
                                     }
                                 }
                             }
-                            // Con 0 horas pero OTROS datos cargados, el "0H" solo ensucia: se muestran solo
+                            // Con 0 horas pero OTROS datos cargados, el "0" solo ensucia: se muestran solo
                             // los otros datos. Una tarja de 0 horas sin nada mas SI muestra el 0,
                             // para no confundirla con un dia que no se tarjo.
                             const base = hrsNum > 0
-                                ? `${hrsNum}H|${segs.slice(1).join('|')}`
+                                ? `${hrsNum}|${segs.slice(1).join('|')}`
                                 : segs.slice(1).join('|');
                             return [base, extraDia].filter(Boolean).join(' ');
                         }
@@ -380,9 +382,11 @@ export async function exportExcel(
                                 }
                             }
                             // 0 horas con algun tipo de carga nuevo: se muestra solo el tipo,
-                            // el "0H" al lado no aporta nada y ensucia la planilla.
+                            // el "0" al lado no aporta nada y ensucia la planilla.
                             if (numericVal === 0 && extraDia) return extraDia;
-                            return [`${numericVal}H`, extraDia].filter(Boolean).join(' ');
+                            // Dia con solo horas (sin ningun tipo extra): numero de Excel puro,
+                            // sin letra, para que se pueda sumar directo en la planilla.
+                            return extraDia ? `${numericVal} ${extraDia}` : numericVal;
                         }
 
                         // Número plano sin prefijo — datos viejos (compatibilidad)
@@ -393,7 +397,7 @@ export async function exportExcel(
                                 const currentSum = foreignSectorsMap.get(att.record_sector_name) ?? 0;
                                 foreignSectorsMap.set(att.record_sector_name, currentSum + numericVal);
                             }
-                            return `${numericVal}H`;
+                            return numericVal;
                         }
                         // 'C' standalone — cosecha sin cantidad
                         return valStr;
@@ -529,11 +533,11 @@ export async function exportExcel(
                             }
                         }
                     }
-                    // Con 0 horas pero OTROS datos cargados, el "0H" solo ensucia: se muestran solo
+                    // Con 0 horas pero OTROS datos cargados, el "0" solo ensucia: se muestran solo
                             // los otros datos. Una tarja de 0 horas sin nada mas SI muestra el 0,
                             // para no confundirla con un dia que no se tarjo.
                             return hrsNum > 0
-                                ? `${hrsNum}H|${segs.slice(1).join('|')}`
+                                ? `${hrsNum}|${segs.slice(1).join('|')}`
                                 : segs.slice(1).join('|');
                 }
                 if (valStr.startsWith('$')) {
@@ -544,12 +548,12 @@ export async function exportExcel(
                 if (valStr.startsWith('H ')) {
                     const numericVal = parseHorasSegmentOrphan(valStr);
                     if (numericVal > 0) totalHorasOrphan += numericVal;
-                    return `${numericVal}H`;
+                    return numericVal;
                 }
                 const numericVal = parseFloat(valStr);
                 if (!isNaN(numericVal)) {
                     totalHorasOrphan += numericVal;
-                    return `${numericVal}H`;
+                    return numericVal;
                 }
                 return valStr;
             });
@@ -627,9 +631,9 @@ export async function exportExcel(
             etiqueta: string;
             colTotal: number;
             valor: (t: typeof totalesPorDia[number]) => number;
-            celda: (n: number) => string;
+            celda: (n: number) => string | number;
         }> = [
-            { etiqueta: 'TOTAL HORAS',   colTotal: colDe('HORAS'),   valor: t => t.horas,   celda: n => `${fmtNum(n)}H` },
+            { etiqueta: 'TOTAL HORAS',   colTotal: colDe('HORAS'),   valor: t => t.horas,   celda: n => Math.round(n * 100) / 100 },
             { etiqueta: 'TOTAL COSECHA', colTotal: colDe('COSECHA'), valor: t => t.cosecha, celda: n => fmtNum(n) },
             { etiqueta: 'TOTAL CAJAS',   colTotal: colDe('CAJAS'),   valor: t => t.cajas,   celda: n => fmtNum(n) },
             { etiqueta: 'TOTAL CAJONES', colTotal: colDe('CAJONES'), valor: t => t.cajones, celda: n => fmtNum(n) },
