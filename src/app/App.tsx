@@ -171,7 +171,7 @@ function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: 
   const activos = isGlobal ? Math.max(0, totalEmpleados - globalStats.ausentes) : totalEmpleados;
   const horasTotales = isGlobal ? globalStats.horasTotales : null;
   const cosechaTotales = isGlobal ? globalStats.cosechaTotales : null;
-  const importeTotales = isGlobal ? globalStats.importeTotales : null;
+  const abonadaTotales = isGlobal ? globalStats.abonadaTotales : null;
   const cajasTotales = isGlobal ? globalStats.cajasTotales : null;
   const cajonesTotales = isGlobal ? globalStats.cajonesTotales : null;
   // Tipos de carga nuevos, mismo criterio que el resto: solo tienen sentido en la
@@ -186,7 +186,6 @@ function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: 
 
   const fmtH = (v: number | null) => v === null ? "—" : v === 0 ? "0H" : v < 1 ? "<1H" : `${Math.round(v)}H`;
   const fmtKg = (v: number | null) => v === null ? "—" : v === 0 ? "0" : v.toLocaleString("es", { maximumFractionDigits: 0 });
-  const fmtPesos = (v: number | null) => v === null ? "—" : v === 0 ? "$0" : "$" + v.toLocaleString("es", { maximumFractionDigits: 0 });
 
   const stat = (label: string, value: string | number) => (
     <div>
@@ -207,7 +206,7 @@ function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: 
         {stat("Cosecha", fmtKg(cosechaTotales))}
         {stat("Cajas", fmtKg(cajasTotales))}
         {stat("Cajones", fmtKg(cajonesTotales))}
-        {stat("Importe", fmtPesos(importeTotales))}
+        {stat("Abonada", fmtKg(abonadaTotales))}
         {stat("Km/Viajes", fmtKg(kmViajesTotales))}
         {stat("Has Fumigadas", fmtKg(hasFumigadasTotales))}
         {stat("Siembra/Trilla", fmtKg(siembraTrillaTotales))}
@@ -591,10 +590,10 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     setDiaEstado(nueva.toISOString().slice(0, 10));
   };
 
-  // Total del período por empleado — cuenta horas + cosecha + cajas + cajones + importe, no solo horas.
+  // Total del período por empleado — cuenta horas + cosecha + cajas + cajones + abonada, no solo horas.
   // Mismo criterio que exportExcel.ts para que el total coincida con el del Excel.
   const computeEmployeeTotal = (empMap: Record<string, any>) => {
-    let horas = 0, kg = 0, importe = 0, cajas = 0, cajones = 0;
+    let horas = 0, kg = 0, abonada = 0, cajas = 0, cajones = 0;
     // Tipos de carga nuevos: los numéricos se suman, camión/estiba se cuentan como días
     let km = 0, ha = 0, st = 0, bol = 0, et = 0, diasCC = 0, diasME = 0;
     const parseHorasSegment = (seg: string): number => {
@@ -612,8 +611,9 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
             const v = parseFloat(seg.slice(2).replace(',', '.'));
             if (!isNaN(v)) kg += v;
           } else if (seg.startsWith('AB:')) {
-            const v = parseFloat(seg.slice(3).replace(',', '.'));
-            if (!isNaN(v)) importe += v;
+            // El "$" es de las tarjas viejas, que traian el signo adentro del valor.
+            const v = parseFloat(seg.slice(3).replace(/[$\s]/g, '').replace(',', '.'));
+            if (!isNaN(v)) abonada += v;
           } else if (seg.startsWith('Cajas ') || seg.startsWith('Cajones ')) {
             const cajasM = seg.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/);
             const cajonesM = seg.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/);
@@ -622,8 +622,9 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
           }
         }
       } else if (workValue.startsWith('$')) {
-        const v = parseFloat(workValue.slice(1).replace(',', '.'));
-        if (!isNaN(v)) importe += v;
+        // Formato viejo: la abonada sola, escrita con el signo adelante.
+        const v = parseFloat(workValue.slice(1).replace(/\s/g, '').replace(',', '.'));
+        if (!isNaN(v)) abonada += v;
       } else if (workValue.startsWith('H ')) {
         horas += parseHorasSegment(workValue);
       } else {
@@ -645,7 +646,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     if (cajas > 0 || cajones > 0) {
       partes.push([cajas > 0 ? `Cajas ${cajas}` : '', cajones > 0 ? `Cajones ${cajones}` : ''].filter(Boolean).join(' '));
     }
-    if (importe > 0) partes.push(`$${importe.toLocaleString('es')}`);
+    if (abonada > 0) partes.push(`Abonada ${abonada.toLocaleString('es')}`);
     if (km > 0) partes.push(`Km ${km}`);
     if (ha > 0) partes.push(`Ha ${ha}`);
     if (st > 0) partes.push(`S/T ${st}`);
@@ -2188,7 +2189,7 @@ export default function App() {
   
   const [searchQuery, setSearchQuery] = useState("");
   const [globalStats, setGlobalStats] = useState({
-    ausentes: 0, horasTotales: 0, cosechaTotales: 0, importeTotales: 0, cajasTotales: 0, cajonesTotales: 0,
+    ausentes: 0, horasTotales: 0, cosechaTotales: 0, abonadaTotales: 0, cajasTotales: 0, cajonesTotales: 0,
     // Tipos de carga nuevos — cada uno con columna propia en el servidor, se leen
     // directo de ahi (no hay que reparsear texto como con horas/cosecha/etc).
     kmViajesTotales: 0, hasFumigadasTotales: 0, siembraTrillaTotales: 0, bolserosTotales: 0, etiquetadoTotales: 0,
@@ -2484,7 +2485,7 @@ export default function App() {
 
       let totalH = 0;
       let totalCosecha = 0;
-      let totalImporte = 0;
+      let totalAbonada = 0;
       let totalCajas = 0;
       let totalCajones = 0;
       let totalKm = 0, totalFum = 0, totalSiembra = 0, totalBols = 0, totalEtiq = 0, totalCamion = 0, totalEstiba = 0;
@@ -2525,8 +2526,8 @@ export default function App() {
                                           const kg = parseFloat(seg.slice(2).replace(',', '.'));
                                           if (!isNaN(kg)) sC += kg;
                                       } else if (seg.startsWith('AB:')) {
-                                          const imp = parseFloat(seg.slice(3).replace(',', '.'));
-                                          if (!isNaN(imp)) sI += imp;
+                                          const ab = parseFloat(seg.slice(3).replace(/[$\s]/g, '').replace(',', '.'));
+                                          if (!isNaN(ab)) sI += ab;
                                       } else if (seg.startsWith('Cajas ') || seg.startsWith('Cajones ')) {
                                           const cajasM = seg.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/);
                                           const cajonesM = seg.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/);
@@ -2538,8 +2539,8 @@ export default function App() {
                                   // cosecha sin cantidad
                                   sC += 1;
                               } else if (val.startsWith('$')) {
-                                  const imp = parseFloat(val.slice(1).replace(',', '.'));
-                                  if (!isNaN(imp)) sI += imp;
+                                  const ab = parseFloat(val.slice(1).replace(/\s/g, '').replace(',', '.'));
+                                  if (!isNaN(ab)) sI += ab;
                               } else if (val.startsWith('H ')) {
                                   sH += parseHorasSegment(val);
                               } else {
@@ -2558,15 +2559,15 @@ export default function App() {
               return { sH, sC, sI, sCj, sCn, sKm, sFum, sSiembra, sBols, sEtiq, sCamion, sEstiba };
           }));
           for (const r of results) {
-              totalH += r.sH; totalCosecha += r.sC; totalImporte += r.sI; totalCajas += r.sCj; totalCajones += r.sCn;
+              totalH += r.sH; totalCosecha += r.sC; totalAbonada += r.sI; totalCajas += r.sCj; totalCajones += r.sCn;
               totalKm += r.sKm; totalFum += r.sFum; totalSiembra += r.sSiembra; totalBols += r.sBols; totalEtiq += r.sEtiq;
               totalCamion += r.sCamion; totalEstiba += r.sEstiba;
           }
       }
 
-      console.log("[Stats] Horas:", totalH, "Cosecha:", totalCosecha, "Importe:", totalImporte, "Cajas:", totalCajas, "Cajones:", totalCajones);
+      console.log("[Stats] Horas:", totalH, "Cosecha:", totalCosecha, "Abonada:", totalAbonada, "Cajas:", totalCajas, "Cajones:", totalCajones);
       setGlobalStats({
-        ausentes: ausentesCount, horasTotales: totalH, cosechaTotales: totalCosecha, importeTotales: totalImporte, cajasTotales: totalCajas, cajonesTotales: totalCajones,
+        ausentes: ausentesCount, horasTotales: totalH, cosechaTotales: totalCosecha, abonadaTotales: totalAbonada, cajasTotales: totalCajas, cajonesTotales: totalCajones,
         kmViajesTotales: totalKm, hasFumigadasTotales: totalFum, siembraTrillaTotales: totalSiembra, bolserosTotales: totalBols, etiquetadoTotales: totalEtiq,
         camionCargas: totalCamion, estibaCargas: totalEstiba,
       });

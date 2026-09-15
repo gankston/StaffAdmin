@@ -33,6 +33,15 @@ export interface ExportParams {
         siembra_trilla?: number | null;
         bolseros?: number | null;
         etiquetado?: number | null;
+        // Etiquetado abierto por lata, y Descarga/Carga (FABRICA)
+        etiquetado_lata_185?: number | null;
+        etiquetado_lata_750?: number | null;
+        etiquetado_lata_2500?: number | null;
+        etiquetado_lata_8kg?: number | null;
+        descarga_jaula?: number | null;
+        descarga_camion?: number | null;
+        carga_jaula?: number | null;
+        carga_camion_cantidad?: number | null;
         carga_camion_kg50?: boolean | null;
         carga_camion_kg25?: boolean | null;
         carga_camion_otro?: string | null;
@@ -107,18 +116,26 @@ export async function exportExcel(
         // ── Create workbook and matrix ────────────────────────────────────
         const wb = XLSX.utils.book_new();
 
-        // Formatea un total numérico: entero sin decimales, decimal con coma (ej: 19,58)
-        const fmtNum = (n: number): string => {
-            const r = Math.round(n * 100) / 100;
-            return Number.isInteger(r) ? String(r) : r.toFixed(2).replace('.', ',');
-        };
+        // Todo total sale como NUMERO de Excel, nunca como texto. Escrito como texto el
+        // "19,58" se ve igual pero no entra en un SUMA() ni se puede multiplicar, que es
+        // justo para lo que RRHH abre la planilla. La coma decimal la pone Excel segun el
+        // idioma del sistema; no hay que escribirla a mano.
+        const fmtNum = (n: number): number => Math.round(n * 100) / 100;
         // Celda de total (horas, cosecha, cajas, cajones): numero de Excel puro, sin
         // sigla ni letra — el nombre de la columna ya dice que es, y asi RRHH lo puede
         // sumar/multiplicar directo en la planilla sin tener que limpiarlo antes.
         const celdaTotal = (_sigla: string, n: number): number | string => (n > 0 ? Math.round(n * 100) / 100 : '');
-        // "Abonada y Otros" es texto libre (concepto y/o monto): se muestra tal cual se
-        // cargo. Por eso no lleva fila de total abajo — sumar texto daria un numero falso.
-        const celdaAbonada = (textos: string[]): string => textos.filter(Boolean).join(' | ');
+        // Abonada es una cantidad y suma como cualquier otra columna. Hasta agosto de
+        // 2026 el campo era libre: se escribia con signo de peso ("$ 10200") o con el
+        // nombre de la tarea ("limpieza"). Por eso:
+        //  - el signo y los espacios se descartan al leer, para que esas tarjas viejas
+        //    sumen igual que las nuevas en vez de quedar afuera en silencio;
+        //  - lo que no es un numero no se suma ni se pierde: va a OBSERVACIONES.
+        const numAbonada = (texto: string | undefined | null): number => {
+            if (!texto) return NaN;
+            return parseFloat(String(texto).replace(/\$/g, '').replace(/\s/g, '').replace(',', '.'));
+        };
+        const abonadaEsTexto = (t: string): boolean => !!t.trim() && isNaN(numAbonada(t));
 
         // Tipos de carga nuevos — cada uno con su columna propia (ya no JSON). Se
         // muestran en OBSERVACIONES como texto legible en vez de sumarse a columnas
@@ -156,7 +173,7 @@ export async function exportExcel(
         // ── Totales verticales por día (lo que cierra la jornada para RRHH) ──
         // Se acumulan leyendo las celdas ya normalizadas de cada empleado ("8H",
         // "0H|C:33", "$36400"), asi hay un solo criterio y no se duplica el parseo.
-        const totalesPorDia = dateStrings.map(() => ({ horas: 0, cosecha: 0, cajas: 0, cajones: 0, importe: 0 }));
+        const totalesPorDia = dateStrings.map(() => ({ horas: 0, cosecha: 0, cajas: 0, cajones: 0, abonada: 0 }));
         const numDe = (s: string | undefined): number => {
             if (!s) return 0;
             const n = parseFloat(s.replace(',', '.'));
@@ -180,9 +197,11 @@ export async function exportExcel(
                 acc.cosecha  += numDe(celda.match(/C:([0-9]+(?:[.,][0-9]+)?)/)?.[1]);
                 acc.cajas    += numDe(celda.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/)?.[1]);
                 acc.cajones  += numDe(celda.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/)?.[1]);
-                const ab = celda.match(/AB:([0-9]+(?:[.,][0-9]+)?)/)?.[1];
-                if (ab) acc.importe += numDe(ab);
-                else if (celda.startsWith('$')) acc.importe += numDe(celda.slice(1));
+                // El "\$?" es por las tarjas de agosto de 2026 y anteriores, que se
+                // cargaban con el signo adentro. Hoy el campo es un numero pelado.
+                const ab = celda.match(/AB:\s*\$?\s*([0-9]+(?:[.,][0-9]+)?)/)?.[1];
+                if (ab) acc.abonada += numDe(ab);
+                else if (celda.startsWith('$')) acc.abonada += numDe(celda.slice(1));
             });
         };
 
@@ -201,6 +220,19 @@ export async function exportExcel(
             { header: 'ETIQUETADO', campo: 'etiquetado', tipo: 'num' },
             { header: 'CARGA CAMION', campo: 'carga_camion', tipo: 'peso' },
             { header: 'MOV. ESTIBA', campo: 'movimiento_estiba', tipo: 'peso' },
+            // Etiquetado abierto por tamaño de lata
+            { header: 'LATA 185', campo: 'etiquetado_lata_185', tipo: 'num' },
+            { header: 'LATA 750', campo: 'etiquetado_lata_750', tipo: 'num' },
+            { header: 'LATA 2500', campo: 'etiquetado_lata_2500', tipo: 'num' },
+            { header: 'LATA 8 KGS', campo: 'etiquetado_lata_8kg', tipo: 'num' },
+            // Descarga y Carga: solo aparecen en FABRICA, que es el unico sector
+            // que los usa — el filtro de abajo saca las columnas sin dato.
+            { header: 'DESCARGA JAULA', campo: 'descarga_jaula', tipo: 'num' },
+            { header: 'DESCARGA CAMION', campo: 'descarga_camion', tipo: 'num' },
+            { header: 'CARGA JAULA', campo: 'carga_jaula', tipo: 'num' },
+            // "CARGA CAMIONES" en plural, para no confundirla con "CARGA CAMION",
+            // que es el otro tipo de carga y lleva pesos en vez de cantidad.
+            { header: 'CARGA CAMIONES', campo: 'carga_camion_cantidad', tipo: 'num' },
         ].filter(c => c.tipo === 'num'
             ? tieneDato(c.campo)
             : tieneDato(`${c.campo}_kg50`) || tieneDato(`${c.campo}_kg25`) || tieneDato(`${c.campo}_otro`));
@@ -217,6 +249,23 @@ export async function exportExcel(
             if (cc.length) partes.push('CC ' + cc.join('/'));
             const me = pesosDe(a, 'movimiento_estiba');
             if (me.length) partes.push('ME ' + me.join('/'));
+            const latas = [
+                a.etiquetado_lata_185 ? `185:${a.etiquetado_lata_185}` : '',
+                a.etiquetado_lata_750 ? `750:${a.etiquetado_lata_750}` : '',
+                a.etiquetado_lata_2500 ? `2500:${a.etiquetado_lata_2500}` : '',
+                a.etiquetado_lata_8kg ? `8kg:${a.etiquetado_lata_8kg}` : '',
+            ].filter(Boolean);
+            if (latas.length) partes.push('Lata ' + latas.join('/'));
+            const desc = [
+                a.descarga_jaula ? `J${a.descarga_jaula}` : '',
+                a.descarga_camion ? `C${a.descarga_camion}` : '',
+            ].filter(Boolean);
+            if (desc.length) partes.push('Desc ' + desc.join('/'));
+            const carg = [
+                a.carga_jaula ? `J${a.carga_jaula}` : '',
+                a.carga_camion_cantidad ? `C${a.carga_camion_cantidad}` : '',
+            ].filter(Boolean);
+            if (carg.length) partes.push('Carga ' + carg.join('/'));
             return partes.join(' ');
         };
 
@@ -228,10 +277,10 @@ export async function exportExcel(
         ].filter(Boolean);
 
         const filaCabeceras = ['N', 'DNI', params?.sectorName ?? 'SECTOR', ...daysArr,
-            'HORAS', 'COSECHA', 'CAJAS', 'CAJONES', 'ABONADA Y OTROS',
+            'HORAS', 'COSECHA', 'CAJAS', 'CAJONES', 'ABONADA',
             ...columnasNuevas.map(c => c.header), 'OBSERVACIONES'];
         // Indices calculados por nombre: antes se hacia con restas sobre la posicion de
-        // IMPORTE y cualquier columna nueva rompia silenciosamente los totales.
+        // ABONADA y cualquier columna nueva rompia silenciosamente los totales.
         const colDe = (header: string) => filaCabeceras.indexOf(header);
         const excelData: (string | number | null)[][] = [
             ['ENCARGADO'],
@@ -244,7 +293,7 @@ export async function exportExcel(
         let granTotalCosecha = 0;
         let granTotalCajas = 0;
         let granTotalCajones = 0;
-        let granTotalImporte = 0;
+        let granTotalAbonada = 0;
 
         // ── Mapeo de Empleados (Filas 5 en adelante) ─────────────────────
         const attendances = params?.attendances ?? [];
@@ -286,7 +335,7 @@ export async function exportExcel(
         employees.forEach((emp, index) => {
             let totalHorasEmpleado = 0;
             let totalCosechaEmpleado = 0;
-            let totalImporteEmpleado = 0;
+            let totalAbonadaEmpleado = 0;
             let totalCajasEmpleado = 0;
             let totalCajonesEmpleado = 0;
             // Totales de los tipos nuevos: los numericos se suman, camion/estiba cuentan dias
@@ -306,9 +355,10 @@ export async function exportExcel(
                         }
                     }
                 });
-                // Abonada: se guarda el texto tal cual, sin convertirlo a numero
+                // Solo se guarda lo que NO es un numero: esas tarjas viejas traian el
+                // nombre de la tarea en vez de la cantidad, y van a OBSERVACIONES.
                 const segAB = String(a.work_value ?? '').split('|').find(x => x.startsWith('AB:'));
-                if (segAB) abonadaTextos.push(segAB.slice(3).trim());
+                if (segAB && abonadaEsTexto(segAB.slice(3))) abonadaTextos.push(segAB.slice(3).trim());
             });
             const empAbsences = absencesByEmp.get(emp.id) ?? [];
 
@@ -350,8 +400,8 @@ export async function exportExcel(
                                     const kg = parseFloat(seg.slice(2).replace(',', '.'));
                                     if (!isNaN(kg)) totalCosechaEmpleado += kg;
                                 } else if (seg.startsWith('AB:')) {
-                                    const imp = parseFloat(seg.slice(3).replace(',', '.'));
-                                    if (!isNaN(imp)) totalImporteEmpleado += imp;
+                                    const ab = numAbonada(seg.slice(3));
+                                    if (!isNaN(ab)) totalAbonadaEmpleado += ab;
                                 } else if (seg.startsWith('Cajas ') || seg.startsWith('Cajones ')) {
                                     const cajasM = seg.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/);
                                     const cajonesM = seg.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/);
@@ -374,10 +424,10 @@ export async function exportExcel(
                             return [base, extraDia].filter(Boolean).join(' ');
                         }
 
-                        // Valor standalone '$36400' → importe
+                        // Formato viejo: la abonada suelta, escrita '$36400'
                         if (valStr.startsWith('$')) {
-                            const imp = parseFloat(valStr.slice(1).replace(',', '.'));
-                            if (!isNaN(imp) && imp > 0) totalImporteEmpleado += imp;
+                            const ab = numAbonada(valStr);
+                            if (!isNaN(ab) && ab > 0) totalAbonadaEmpleado += ab;
                             return valStr;
                         }
 
@@ -423,7 +473,7 @@ export async function exportExcel(
             granTotalCosecha += totalCosechaEmpleado;
             granTotalCajas   += totalCajasEmpleado;
             granTotalCajones += totalCajonesEmpleado;
-            granTotalImporte += totalImporteEmpleado;
+            granTotalAbonada += totalAbonadaEmpleado;
 
             // Notas de asistencias del empleado (una por día que tenga nota)
             const empNotasParts: string[] = [];
@@ -437,6 +487,11 @@ export async function exportExcel(
                 // carga tienen columna propia y el estado de aprobacion se ve en el cartel
                 // de StaffAdmin, no hace falta duplicarlos aca.
             });
+            // Lo que en su momento se cargo como texto en abonada (el nombre de la
+            // tarea) no entra en la columna, que ahora es un numero: se muestra aca.
+            if (abonadaTextos.length) {
+                empNotasParts.push(`Abonada: ${[...new Set(abonadaTextos)].join(', ')}`);
+            }
             const notasAsistencias = empNotasParts.join(' | ');
 
             let notaOtrosSectores = '';
@@ -463,7 +518,7 @@ export async function exportExcel(
                 celdaTotal('C',  totalCosechaEmpleado),
                 celdaTotal('CJ', totalCajasEmpleado),
                 celdaTotal('CN', totalCajonesEmpleado),
-                celdaAbonada(abonadaTextos),
+                celdaTotal('AB', totalAbonadaEmpleado),
                 ...columnasNuevas.map(c => {
                     if (c.tipo === 'peso') return [...(pesosNuevos[c.campo] ?? [])].join(', ');
                     const v = totalNuevos[c.campo] ?? 0;
@@ -505,7 +560,7 @@ export async function exportExcel(
         orphanMap.forEach(({ first_name, last_name, dni, is_active, atts }, empId) => {
             let totalHorasOrphan = 0;
             let totalCosechaOrphan = 0;
-            let totalImporteOrphan = 0;
+            let totalAbonadaOrphan = 0;
             let totalCajasOrphan = 0;
             let totalCajonesOrphan = 0;
             const parseHorasSegmentOrphan = (seg: string): number => {
@@ -528,8 +583,8 @@ export async function exportExcel(
                             const kg = parseFloat(seg.slice(2).replace(',', '.'));
                             if (!isNaN(kg)) totalCosechaOrphan += kg;
                         } else if (seg.startsWith('AB:')) {
-                            const imp = parseFloat(seg.slice(3).replace(',', '.'));
-                            if (!isNaN(imp)) totalImporteOrphan += imp;
+                            const ab = numAbonada(seg.slice(3));
+                            if (!isNaN(ab)) totalAbonadaOrphan += ab;
                         } else if (seg.startsWith('Cajas ') || seg.startsWith('Cajones ')) {
                             const cajasM = seg.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/);
                             const cajonesM = seg.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/);
@@ -551,8 +606,8 @@ export async function exportExcel(
                                 : segs.slice(1).join('|');
                 }
                 if (valStr.startsWith('$')) {
-                    const imp = parseFloat(valStr.slice(1).replace(',', '.'));
-                    if (!isNaN(imp) && imp > 0) totalImporteOrphan += imp;
+                    const ab = numAbonada(valStr);
+                    if (!isNaN(ab) && ab > 0) totalAbonadaOrphan += ab;
                     return valStr;
                 }
                 if (valStr.startsWith('H ')) {
@@ -573,7 +628,7 @@ export async function exportExcel(
             granTotalCosecha += totalCosechaOrphan;
             granTotalCajas   += totalCajasOrphan;
             granTotalCajones += totalCajonesOrphan;
-            granTotalImporte += totalImporteOrphan;
+            granTotalAbonada += totalAbonadaOrphan;
             const toSector = transferOutMap.get(empId)
                 ?? atts.find(a => a.current_sector_name && a.current_sector_name !== params?.sectorName)?.current_sector_name
                 ?? atts[0]?.current_sector_name;
@@ -593,9 +648,7 @@ export async function exportExcel(
                 celdaTotal('C',  totalCosechaOrphan),
                 celdaTotal('CJ', totalCajasOrphan),
                 celdaTotal('CN', totalCajonesOrphan),
-                celdaAbonada(atts.map(a =>
-                    String(a.work_value ?? '').split('|').find(x => x.startsWith('AB:'))?.slice(3).trim() ?? ''
-                )),
+                celdaTotal('AB', totalAbonadaOrphan),
                 // Mismos totales de tipos nuevos que en las filas normales, para que la
                 // columna OBSERVACIONES no se corra de lugar en estas filas.
                 ...columnasNuevas.map(c => {
@@ -613,14 +666,13 @@ export async function exportExcel(
 
         // 4. Construir e insertar la fila del Gran Total al final
         // Las 5 columnas de total van antes de OBSERVACIONES (última)
-        const importeColIdx = colDe('ABONADA Y OTROS');
         const filaFinal = Array(filaCabeceras.length).fill('');
         filaFinal[2] = 'TOTAL';
         filaFinal[colDe('HORAS')]   = celdaTotal('H',  granTotalHoras);
         filaFinal[colDe('COSECHA')] = celdaTotal('C',  granTotalCosecha);
         filaFinal[colDe('CAJAS')]   = celdaTotal('CJ', granTotalCajas);
         filaFinal[colDe('CAJONES')] = celdaTotal('CN', granTotalCajones);
-        // ABONADA Y OTROS no lleva gran total: es texto libre, sumarlo daria un numero falso.
+        filaFinal[colDe('ABONADA')] = celdaTotal('AB', granTotalAbonada);
         columnasNuevas.forEach(c => {
             if (c.tipo === 'peso') {
                 const set = new Set<string>();
@@ -647,7 +699,7 @@ export async function exportExcel(
             { etiqueta: 'TOTAL COSECHA', colTotal: colDe('COSECHA'), valor: t => t.cosecha, celda: n => fmtNum(n) },
             { etiqueta: 'TOTAL CAJAS',   colTotal: colDe('CAJAS'),   valor: t => t.cajas,   celda: n => fmtNum(n) },
             { etiqueta: 'TOTAL CAJONES', colTotal: colDe('CAJONES'), valor: t => t.cajones, celda: n => fmtNum(n) },
-            // Sin fila para ABONADA Y OTROS: al ser texto libre no se puede sumar.
+            { etiqueta: 'TOTAL ABONADA', colTotal: colDe('ABONADA'), valor: t => t.abonada, celda: n => fmtNum(n) },
         ];
 
         // Mismo contador por dia para los tipos de carga nuevos. Los numericos se suman;
@@ -711,7 +763,7 @@ export async function exportExcel(
         cols.push({ wch: 11 }); // COSECHA  -> "C 338"
         cols.push({ wch: 11 }); // CAJAS    -> "CJ 19,58"
         cols.push({ wch: 11 }); // CAJONES  -> "CN 42,02"
-        cols.push({ wch: 13 }); // IMPORTE  -> "$47.573"
+        cols.push({ wch: 13 }); // ABONADA  -> "47573,53"
         columnasNuevas.forEach(() => cols.push({ wch: 14 })); // tipos de carga nuevos
         cols.push({ wch: 30 }); // OBSERVACIONES
 
