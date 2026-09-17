@@ -228,11 +228,11 @@ export async function exportExcel(
         const columnasNuevas: Array<{ header: string; campo: string; tipo: 'num' | 'peso' }> = [
             // Cosecha abierta por origen. La columna COSECHA de mas arriba sigue
             // siendo el total del dia; estas dos dicen de donde salio.
-            { header: 'COSECHA CAÑADAS', campo: 'cosecha_canadas', tipo: 'num' },
-            { header: 'COSECHA INV', campo: 'cosecha_inv', tipo: 'num' },
+            { header: 'CC - COSECHA CAÑADAS', campo: 'cosecha_canadas', tipo: 'num' },
+            { header: 'CI - COSECHA INV', campo: 'cosecha_inv', tipo: 'num' },
             // Tantero: solo los sectores con "Cañadas" en el nombre.
-            { header: 'TANTERO INVERNADERO', campo: 'tantero_invernadero', tipo: 'num' },
-            { header: 'TANTERO CAMPO', campo: 'tantero_campo', tipo: 'num' },
+            { header: 'TI - TANTERO INVERNADERO', campo: 'tantero_invernadero', tipo: 'num' },
+            { header: 'TC - TANTERO CAMPO', campo: 'tantero_campo', tipo: 'num' },
             { header: 'HAS FUMIGADAS', campo: 'has_fumigadas', tipo: 'num' },
             { header: 'SIEMBRA/TRILLA', campo: 'siembra_trilla', tipo: 'num' },
             { header: 'BOLSEROS', campo: 'bolseros', tipo: 'num' },
@@ -259,14 +259,12 @@ export async function exportExcel(
         // Resumen corto de los tipos nuevos de UNA tarja, para la celda del dia.
         const tiposDelDia = (a: Record<string, any>): string => {
             const partes: string[] = [];
-            // CC = cosecha de Cañadas, CI = cosecha de Raigon/Invernadero.
+            // Las siglas van solas, igual que en la app: CC = cosecha Cañadas,
+            // CI = cosecha Raigon/Inv, TI = tantero invernadero, TC = tantero campo.
             if (a.cosecha_canadas) partes.push(`CC:${a.cosecha_canadas}`);
             if (a.cosecha_inv) partes.push(`CI:${a.cosecha_inv}`);
-            const tant = [
-                a.tantero_invernadero ? `Inv ${a.tantero_invernadero}` : '',
-                a.tantero_campo ? `Campo ${a.tantero_campo}` : '',
-            ].filter(Boolean);
-            if (tant.length) partes.push('Tantero ' + tant.join('/'));
+            if (a.tantero_invernadero) partes.push(`TI:${a.tantero_invernadero}`);
+            if (a.tantero_campo) partes.push(`TC:${a.tantero_campo}`);
             if (a.has_fumigadas) partes.push(`Ha ${a.has_fumigadas}`);
             if (a.siembra_trilla) partes.push(`S/T ${a.siembra_trilla}`);
             if (a.bolseros) partes.push(`Bols ${a.bolseros}`);
