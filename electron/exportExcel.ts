@@ -38,6 +38,11 @@ export interface ExportParams {
         etiquetado_lata_750?: number | null;
         etiquetado_lata_2500?: number | null;
         etiquetado_lata_8kg?: number | null;
+        cosecha_canadas?: number | null;
+        cosecha_inv?: number | null;
+        tantero_invernadero?: number | null;
+        tantero_campo?: number | null;
+        cosecha?: number | null;
         descarga_jaula?: number | null;
         descarga_camion?: number | null;
         carga_jaula?: number | null;
@@ -142,7 +147,6 @@ export async function exportExcel(
         // (todavía no hay volumen de datos real para justificar columnas propias).
         const formatTiposNuevos = (a: Record<string, any>): string => {
             const partes: string[] = [];
-            if (a.km_viajes) partes.push(`Km ${a.km_viajes}`);
             if (a.has_fumigadas) partes.push(`Ha fumigadas ${a.has_fumigadas}`);
             if (a.siembra_trilla) partes.push(`Siembra/Trilla ${a.siembra_trilla}`);
             if (a.bolseros) partes.push(`Bolseros ${a.bolseros}`);
@@ -194,7 +198,8 @@ export async function exportExcel(
                 // Las horas van al principio del string, seguidas de espacio, "|" o fin
                 // (ya no llevan "H" atras) — ej. "8 Km 5", "8|C:33", "8|Cajas 23 Cajones 55".
                 acc.horas    += numDe(celda.match(/^([0-9]+(?:[.,][0-9]+)?)(?=\s|\||$)/)?.[1]);
-                acc.cosecha  += numDe(celda.match(/C:([0-9]+(?:[.,][0-9]+)?)/)?.[1]);
+                // La cosecha del dia no sale de la celda: se suma aparte desde la
+                // columna, mas abajo, para que cuente igual la vieja y la abierta.
                 acc.cajas    += numDe(celda.match(/Cajas ([0-9]+(?:[.,][0-9]+)?)/)?.[1]);
                 acc.cajones  += numDe(celda.match(/Cajones ([0-9]+(?:[.,][0-9]+)?)/)?.[1]);
                 // El "\$?" es por las tarjas de agosto de 2026 y anteriores, que se
@@ -205,6 +210,14 @@ export async function exportExcel(
             });
         };
 
+        // Cosecha por dia, leida de la columna. Va aparte de acumularPorDia porque
+        // ese lee las celdas ya armadas y el "C:" dejo de escribirse.
+        dateStrings.forEach((fecha, i) => {
+            totalesPorDia[i].cosecha = (params?.attendances ?? [])
+                .filter(a => a.date && String(a.date).startsWith(fecha))
+                .reduce((acc, a) => acc + (Number(a.cosecha) || 0), 0);
+        });
+
         // 1. Inicializar la matriz con las filas iniciales
         // Una columna de total separada por cada tipo de dato
         // Los tipos de carga nuevos llevan columna propia igual que los viejos.
@@ -213,7 +226,13 @@ export async function exportExcel(
         const tieneDato = (campo: string) =>
             (params?.attendances ?? []).some(a => a[campo] !== null && a[campo] !== undefined && a[campo] !== false);
         const columnasNuevas: Array<{ header: string; campo: string; tipo: 'num' | 'peso' }> = [
-            { header: 'KM/VIAJES', campo: 'km_viajes', tipo: 'num' },
+            // Cosecha abierta por origen. La columna COSECHA de mas arriba sigue
+            // siendo el total del dia; estas dos dicen de donde salio.
+            { header: 'COSECHA CAÑADAS', campo: 'cosecha_canadas', tipo: 'num' },
+            { header: 'COSECHA INV', campo: 'cosecha_inv', tipo: 'num' },
+            // Tantero: solo los sectores con "Cañadas" en el nombre.
+            { header: 'TANTERO INVERNADERO', campo: 'tantero_invernadero', tipo: 'num' },
+            { header: 'TANTERO CAMPO', campo: 'tantero_campo', tipo: 'num' },
             { header: 'HAS FUMIGADAS', campo: 'has_fumigadas', tipo: 'num' },
             { header: 'SIEMBRA/TRILLA', campo: 'siembra_trilla', tipo: 'num' },
             { header: 'BOLSEROS', campo: 'bolseros', tipo: 'num' },
@@ -240,13 +259,20 @@ export async function exportExcel(
         // Resumen corto de los tipos nuevos de UNA tarja, para la celda del dia.
         const tiposDelDia = (a: Record<string, any>): string => {
             const partes: string[] = [];
-            if (a.km_viajes) partes.push(`Km ${a.km_viajes}`);
+            // CC = cosecha de Cañadas, CI = cosecha de Raigon/Invernadero.
+            if (a.cosecha_canadas) partes.push(`CC:${a.cosecha_canadas}`);
+            if (a.cosecha_inv) partes.push(`CI:${a.cosecha_inv}`);
+            const tant = [
+                a.tantero_invernadero ? `Inv ${a.tantero_invernadero}` : '',
+                a.tantero_campo ? `Campo ${a.tantero_campo}` : '',
+            ].filter(Boolean);
+            if (tant.length) partes.push('Tantero ' + tant.join('/'));
             if (a.has_fumigadas) partes.push(`Ha ${a.has_fumigadas}`);
             if (a.siembra_trilla) partes.push(`S/T ${a.siembra_trilla}`);
             if (a.bolseros) partes.push(`Bols ${a.bolseros}`);
             if (a.etiquetado) partes.push(`Etiq ${a.etiquetado}`);
             const cc = pesosDe(a, 'carga_camion');
-            if (cc.length) partes.push('CC ' + cc.join('/'));
+            if (cc.length) partes.push('Camión ' + cc.join('/'));
             const me = pesosDe(a, 'movimiento_estiba');
             if (me.length) partes.push('ME ' + me.join('/'));
             const latas = [
@@ -343,6 +369,9 @@ export async function exportExcel(
             const pesosNuevos: Record<string, Set<string>> = {};
             const abonadaTextos: string[] = [];
             const empAtts = attendances.filter(a => String(a.employee_id) === String(emp.id) || (emp.dni && a.dni === emp.dni));
+            // La cosecha se lee de la columna y no del texto: desde que se abrio en
+            // Cañadas/Inv el "C:" ya no se escribe, y la columna es el dato real.
+            totalCosechaEmpleado = empAtts.reduce((acc, a) => acc + (Number(a.cosecha) || 0), 0);
             empAtts.forEach(a => {
                 columnasNuevas.forEach(c => {
                     if (c.tipo === 'num') {
@@ -397,8 +426,8 @@ export async function exportExcel(
 
                             for (const seg of segs.slice(1)) {
                                 if (seg.startsWith('C:')) {
-                                    const kg = parseFloat(seg.slice(2).replace(',', '.'));
-                                    if (!isNaN(kg)) totalCosechaEmpleado += kg;
+                                    // La cosecha ya se sumo desde la columna, aca no se
+                                    // vuelve a contar: el texto es solo para mostrar.
                                 } else if (seg.startsWith('AB:')) {
                                     const ab = numAbonada(seg.slice(3));
                                     if (!isNaN(ab)) totalAbonadaEmpleado += ab;
@@ -559,7 +588,7 @@ export async function exportExcel(
         let orphanIndex = employees.length + 1;
         orphanMap.forEach(({ first_name, last_name, dni, is_active, atts }, empId) => {
             let totalHorasOrphan = 0;
-            let totalCosechaOrphan = 0;
+            let totalCosechaOrphan = atts.reduce((acc, a) => acc + (Number(a.cosecha) || 0), 0);
             let totalAbonadaOrphan = 0;
             let totalCajasOrphan = 0;
             let totalCajonesOrphan = 0;
@@ -580,8 +609,7 @@ export async function exportExcel(
                     if (hrsNum > 0) totalHorasOrphan += hrsNum;
                     for (const seg of segs.slice(1)) {
                         if (seg.startsWith('C:')) {
-                            const kg = parseFloat(seg.slice(2).replace(',', '.'));
-                            if (!isNaN(kg)) totalCosechaOrphan += kg;
+                            // Igual que arriba: la cosecha se suma desde la columna.
                         } else if (seg.startsWith('AB:')) {
                             const ab = numAbonada(seg.slice(3));
                             if (!isNaN(ab)) totalAbonadaOrphan += ab;
