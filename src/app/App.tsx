@@ -176,7 +176,14 @@ function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: 
   const cajonesTotales = isGlobal ? globalStats.cajonesTotales : null;
   // Tipos de carga nuevos, mismo criterio que el resto: solo tienen sentido en la
   // vista global (por sector individual se puede agregar despues si hace falta).
-  const kmViajesTotales = isGlobal ? globalStats.kmViajesTotales : null;
+  // Cosecha abierta por tipo y Tantero. La tarjeta "Cosecha" sigue siendo el
+  // total; estas dicen de que tipo salio.
+  const cosechaCanadasTotales = isGlobal ? globalStats.cosechaCanadasTotales : null;
+  const cosechaInvTotales = isGlobal ? globalStats.cosechaInvTotales : null;
+  const tanteroInvTotales = isGlobal ? globalStats.tanteroInvTotales : null;
+  const tanteroCampoTotales = isGlobal ? globalStats.tanteroCampoTotales : null;
+  const descargaTotales = isGlobal ? globalStats.descargaTotales : null;
+  const cargaTotales = isGlobal ? globalStats.cargaTotales : null;
   const hasFumigadasTotales = isGlobal ? globalStats.hasFumigadasTotales : null;
   const siembraTrillaTotales = isGlobal ? globalStats.siembraTrillaTotales : null;
   const bolserosTotales = isGlobal ? globalStats.bolserosTotales : null;
@@ -207,13 +214,18 @@ function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: 
         {stat("Cajas", fmtKg(cajasTotales))}
         {stat("Cajones", fmtKg(cajonesTotales))}
         {stat("Abonada", fmtKg(abonadaTotales))}
-        {stat("Km/Viajes", fmtKg(kmViajesTotales))}
+        {stat("Cosecha Cañadas", fmtKg(cosechaCanadasTotales))}
+        {stat("Cosecha Inv", fmtKg(cosechaInvTotales))}
+        {stat("Tantero Inv", fmtKg(tanteroInvTotales))}
+        {stat("Tantero Campo", fmtKg(tanteroCampoTotales))}
         {stat("Has Fumigadas", fmtKg(hasFumigadasTotales))}
         {stat("Siembra/Trilla", fmtKg(siembraTrillaTotales))}
         {stat("Bolseros", fmtKg(bolserosTotales))}
         {stat("Etiquetado", fmtKg(etiquetadoTotales))}
         {stat("Cargas Camión", fmtKg(camionCargas))}
         {stat("Cargas Estiba", fmtKg(estibaCargas))}
+        {stat("Descarga", fmtKg(descargaTotales))}
+        {stat("Carga", fmtKg(cargaTotales))}
         {stat("Sectores", src.length)}
       </div>
     </div>
@@ -2212,8 +2224,10 @@ export default function App() {
     ausentes: 0, horasTotales: 0, cosechaTotales: 0, abonadaTotales: 0, cajasTotales: 0, cajonesTotales: 0,
     // Tipos de carga nuevos — cada uno con columna propia en el servidor, se leen
     // directo de ahi (no hay que reparsear texto como con horas/cosecha/etc).
-    kmViajesTotales: 0, hasFumigadasTotales: 0, siembraTrillaTotales: 0, bolserosTotales: 0, etiquetadoTotales: 0,
+    hasFumigadasTotales: 0, siembraTrillaTotales: 0, bolserosTotales: 0, etiquetadoTotales: 0,
     camionCargas: 0, estibaCargas: 0,
+    cosechaCanadasTotales: 0, cosechaInvTotales: 0, tanteroInvTotales: 0, tanteroCampoTotales: 0,
+    descargaTotales: 0, cargaTotales: 0,
   });
 
   // Global Employee Search — llama al endpoint /api/admin/employees/search
@@ -2508,7 +2522,8 @@ export default function App() {
       let totalAbonada = 0;
       let totalCajas = 0;
       let totalCajones = 0;
-      let totalKm = 0, totalFum = 0, totalSiembra = 0, totalBols = 0, totalEtiq = 0, totalCamion = 0, totalEstiba = 0;
+      let totalFum = 0, totalSiembra = 0, totalBols = 0, totalEtiq = 0, totalCamion = 0, totalEstiba = 0;
+      let totalCC = 0, totalCI = 0, totalTI = 0, totalTC = 0, totalDesc = 0, totalCarga = 0;
       if (sectors && sectors.length > 0) {
           const parseHorasSegment = (seg: string): number => {
               const s = seg.startsWith('H ') ? seg.slice(2) : seg;
@@ -2517,7 +2532,8 @@ export default function App() {
           };
           const results = await Promise.all(sectors.map(async (sec) => {
               let sH = 0, sC = 0, sI = 0, sCj = 0, sCn = 0;
-              let sKm = 0, sFum = 0, sSiembra = 0, sBols = 0, sEtiq = 0, sCamion = 0, sEstiba = 0;
+              let sFum = 0, sSiembra = 0, sBols = 0, sEtiq = 0, sCamion = 0, sEstiba = 0;
+              let sCC = 0, sCI = 0, sTI = 0, sTC = 0, sDesc = 0, sCarga = 0;
               const url = `https://staffaxis-new-version-production.up.railway.app/api/admin/report?sector_id=${encodeURIComponent(sec.apiId)}&start_date=${todayStr}&end_date=${todayStr}`;
               try {
                   const res = await fetch(url, { headers });
@@ -2528,7 +2544,12 @@ export default function App() {
                               // Igual que arriba: la cosecha sale de la columna.
                               sC += Number(att.cosecha) || 0;
                               // Tipos nuevos: vienen ya tipados en columnas propias del reporte.
-                              sKm += Number(att.km_viajes) || 0;
+                              sCC += Number(att.cosecha_canadas) || 0;
+                              sCI += Number(att.cosecha_inv) || 0;
+                              sTI += Number(att.tantero_invernadero) || 0;
+                              sTC += Number(att.tantero_campo) || 0;
+                              sDesc += (Number(att.descarga_jaula) || 0) + (Number(att.descarga_camion) || 0);
+                              sCarga += (Number(att.carga_jaula) || 0) + (Number(att.carga_camion_cantidad) || 0);
                               sFum += Number(att.has_fumigadas) || 0;
                               sSiembra += Number(att.siembra_trilla) || 0;
                               sBols += Number(att.bolseros) || 0;
@@ -2579,20 +2600,26 @@ export default function App() {
               } catch(err) {
                   console.error("[Stats] Error for sector", sec.name, err);
               }
-              return { sH, sC, sI, sCj, sCn, sKm, sFum, sSiembra, sBols, sEtiq, sCamion, sEstiba };
+              return { sH, sC, sI, sCj, sCn, sFum, sSiembra, sBols, sEtiq, sCamion, sEstiba,
+                       sCC, sCI, sTI, sTC, sDesc, sCarga };
           }));
           for (const r of results) {
               totalH += r.sH; totalCosecha += r.sC; totalAbonada += r.sI; totalCajas += r.sCj; totalCajones += r.sCn;
-              totalKm += r.sKm; totalFum += r.sFum; totalSiembra += r.sSiembra; totalBols += r.sBols; totalEtiq += r.sEtiq;
+              totalFum += r.sFum; totalSiembra += r.sSiembra; totalBols += r.sBols; totalEtiq += r.sEtiq;
               totalCamion += r.sCamion; totalEstiba += r.sEstiba;
+              totalCC += r.sCC; totalCI += r.sCI; totalTI += r.sTI; totalTC += r.sTC;
+              totalDesc += r.sDesc; totalCarga += r.sCarga;
           }
       }
 
       console.log("[Stats] Horas:", totalH, "Cosecha:", totalCosecha, "Abonada:", totalAbonada, "Cajas:", totalCajas, "Cajones:", totalCajones);
       setGlobalStats({
         ausentes: ausentesCount, horasTotales: totalH, cosechaTotales: totalCosecha, abonadaTotales: totalAbonada, cajasTotales: totalCajas, cajonesTotales: totalCajones,
-        kmViajesTotales: totalKm, hasFumigadasTotales: totalFum, siembraTrillaTotales: totalSiembra, bolserosTotales: totalBols, etiquetadoTotales: totalEtiq,
+        hasFumigadasTotales: totalFum, siembraTrillaTotales: totalSiembra, bolserosTotales: totalBols, etiquetadoTotales: totalEtiq,
         camionCargas: totalCamion, estibaCargas: totalEstiba,
+        cosechaCanadasTotales: totalCC, cosechaInvTotales: totalCI,
+        tanteroInvTotales: totalTI, tanteroCampoTotales: totalTC,
+        descargaTotales: totalDesc, cargaTotales: totalCarga,
       });
     } catch (e) {
       console.error("[Stats] Critical error:", e);
