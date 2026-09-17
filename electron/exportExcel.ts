@@ -177,6 +177,16 @@ export async function exportExcel(
         // ── Totales verticales por día (lo que cierra la jornada para RRHH) ──
         // Se acumulan leyendo las celdas ya normalizadas de cada empleado ("8H",
         // "0H|C:33", "$36400"), asi hay un solo criterio y no se duplica el parseo.
+        // Cosecha SIN origen: la vieja, la que se cargaba antes de abrirla en
+        // Cañadas / Raigon-Inv. La columna `cosecha` guarda el total, asi que lo
+        // viejo es el total menos los dos origenes. Este tipo de carga ya no se
+        // usa: la columna se va a ir vaciando sola.
+        const cosechaVieja = (a: Record<string, any>): number => {
+            const total = Number(a.cosecha) || 0;
+            const conOrigen = (Number(a.cosecha_canadas) || 0) + (Number(a.cosecha_inv) || 0);
+            return Math.max(0, total - conOrigen);
+        };
+
         const totalesPorDia = dateStrings.map(() => ({ horas: 0, cosecha: 0, cajas: 0, cajones: 0, abonada: 0 }));
         const numDe = (s: string | undefined): number => {
             if (!s) return 0;
@@ -215,7 +225,7 @@ export async function exportExcel(
         dateStrings.forEach((fecha, i) => {
             totalesPorDia[i].cosecha = (params?.attendances ?? [])
                 .filter(a => a.date && String(a.date).startsWith(fecha))
-                .reduce((acc, a) => acc + (Number(a.cosecha) || 0), 0);
+                .reduce((acc, a) => acc + cosechaVieja(a), 0);
         });
 
         // 1. Inicializar la matriz con las filas iniciales
@@ -301,7 +311,7 @@ export async function exportExcel(
         ].filter(Boolean);
 
         const filaCabeceras = ['N', 'DNI', params?.sectorName ?? 'SECTOR', ...daysArr,
-            'HORAS', 'COSECHA', 'CAJAS', 'CAJONES', 'ABONADA',
+            'HORAS', 'COSECHA (DATOS VIEJOS)', 'CAJAS', 'CAJONES', 'ABONADA',
             ...columnasNuevas.map(c => c.header), 'OBSERVACIONES'];
         // Indices calculados por nombre: antes se hacia con restas sobre la posicion de
         // ABONADA y cualquier columna nueva rompia silenciosamente los totales.
@@ -369,7 +379,7 @@ export async function exportExcel(
             const empAtts = attendances.filter(a => String(a.employee_id) === String(emp.id) || (emp.dni && a.dni === emp.dni));
             // La cosecha se lee de la columna y no del texto: desde que se abrio en
             // Cañadas/Inv el "C:" ya no se escribe, y la columna es el dato real.
-            totalCosechaEmpleado = empAtts.reduce((acc, a) => acc + (Number(a.cosecha) || 0), 0);
+            totalCosechaEmpleado = empAtts.reduce((acc, a) => acc + cosechaVieja(a), 0);
             empAtts.forEach(a => {
                 columnasNuevas.forEach(c => {
                     if (c.tipo === 'num') {
@@ -586,7 +596,7 @@ export async function exportExcel(
         let orphanIndex = employees.length + 1;
         orphanMap.forEach(({ first_name, last_name, dni, is_active, atts }, empId) => {
             let totalHorasOrphan = 0;
-            let totalCosechaOrphan = atts.reduce((acc, a) => acc + (Number(a.cosecha) || 0), 0);
+            let totalCosechaOrphan = atts.reduce((acc, a) => acc + cosechaVieja(a), 0);
             let totalAbonadaOrphan = 0;
             let totalCajasOrphan = 0;
             let totalCajonesOrphan = 0;
@@ -695,7 +705,7 @@ export async function exportExcel(
         const filaFinal = Array(filaCabeceras.length).fill('');
         filaFinal[2] = 'TOTAL';
         filaFinal[colDe('HORAS')]   = celdaTotal('H',  granTotalHoras);
-        filaFinal[colDe('COSECHA')] = celdaTotal('C',  granTotalCosecha);
+        filaFinal[colDe('COSECHA (DATOS VIEJOS)')] = celdaTotal('C',  granTotalCosecha);
         filaFinal[colDe('CAJAS')]   = celdaTotal('CJ', granTotalCajas);
         filaFinal[colDe('CAJONES')] = celdaTotal('CN', granTotalCajones);
         filaFinal[colDe('ABONADA')] = celdaTotal('AB', granTotalAbonada);
@@ -722,7 +732,7 @@ export async function exportExcel(
             celda: (n: number) => string | number;
         }> = [
             { etiqueta: 'TOTAL HORAS',   colTotal: colDe('HORAS'),   valor: t => t.horas,   celda: n => Math.round(n * 100) / 100 },
-            { etiqueta: 'TOTAL COSECHA', colTotal: colDe('COSECHA'), valor: t => t.cosecha, celda: n => fmtNum(n) },
+            { etiqueta: 'TOTAL COSECHA (DATOS VIEJOS)', colTotal: colDe('COSECHA (DATOS VIEJOS)'), valor: t => t.cosecha, celda: n => fmtNum(n) },
             { etiqueta: 'TOTAL CAJAS',   colTotal: colDe('CAJAS'),   valor: t => t.cajas,   celda: n => fmtNum(n) },
             { etiqueta: 'TOTAL CAJONES', colTotal: colDe('CAJONES'), valor: t => t.cajones, celda: n => fmtNum(n) },
             { etiqueta: 'TOTAL ABONADA', colTotal: colDe('ABONADA'), valor: t => t.abonada, celda: n => fmtNum(n) },
