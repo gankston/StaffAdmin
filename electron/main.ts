@@ -48,11 +48,12 @@ autoUpdater.on('update-available', () => {
 });
 
 autoUpdater.on('update-downloaded', () => {
-    autoUpdater.quitAndInstall(true, true);
+    autoUpdater.quitAndInstall(false, false);
 });
 
 autoUpdater.on('error', (err) => {
     console.error('Error en el auto-updater:', err);
+    dialog.showErrorBox('Error al actualizar', `No se pudo completar la actualización: ${err.message}`);
 });
 
 let mainWindow: BrowserWindow | null = null;

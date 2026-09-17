@@ -475,6 +475,11 @@ export async function fetchAttendances(
                 const cajasNum = cajasMatch ? parseFloat(cajasMatch[1].replace(',', '.')) : null;
                 const cajonesNum = cajonesMatch ? parseFloat(cajonesMatch[1].replace(',', '.')) : null;
                 return {
+                    // Todo lo que manda el servidor pasa tal cual. Antes esto era
+                    // una lista a mano y cada columna nueva se perdia en silencio:
+                    // el Excel mostraba las columnas vacias aunque el dato existiera.
+                    // Lo que sigue abajo pisa solo lo que hay que calcular.
+                    ...r,
                     id: r.submission_id,
                     employee_id: r.employee_id ?? '',
                     sector_id: sectorId,

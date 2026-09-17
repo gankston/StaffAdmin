@@ -483,7 +483,25 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     if (rec.siembra_trilla) partes.push(`ST${rec.siembra_trilla}`);
     if (rec.bolseros) partes.push(`Bol${rec.bolseros}`);
     if (rec.etiquetado) partes.push(`Et${rec.etiquetado}`);
-    if (rec.carga_camion_kg50 || rec.carga_camion_kg25 || rec.carga_camion_otro) partes.push('CC');
+    // CC y CI son la cosecha por origen; TI y TC el tantero. Las siglas son las
+    // mismas que en la app y en el Excel.
+    if (rec.cosecha_canadas) partes.push(`CC${rec.cosecha_canadas}`);
+    if (rec.cosecha_inv) partes.push(`CI${rec.cosecha_inv}`);
+    if (rec.tantero_invernadero) partes.push(`TI${rec.tantero_invernadero}`);
+    if (rec.tantero_campo) partes.push(`TC${rec.tantero_campo}`);
+    const latas = [
+      rec.etiquetado_lata_185 ? `185:${rec.etiquetado_lata_185}` : '',
+      rec.etiquetado_lata_750 ? `750:${rec.etiquetado_lata_750}` : '',
+      rec.etiquetado_lata_2500 ? `2500:${rec.etiquetado_lata_2500}` : '',
+      rec.etiquetado_lata_8kg ? `8kg:${rec.etiquetado_lata_8kg}` : '',
+    ].filter(Boolean);
+    if (latas.length) partes.push('Lata ' + latas.join('/'));
+    const desc = [rec.descarga_jaula ? `J${rec.descarga_jaula}` : '', rec.descarga_camion ? `C${rec.descarga_camion}` : ''].filter(Boolean);
+    if (desc.length) partes.push('Desc ' + desc.join('/'));
+    const carg = [rec.carga_jaula ? `J${rec.carga_jaula}` : '', rec.carga_camion_cantidad ? `C${rec.carga_camion_cantidad}` : ''].filter(Boolean);
+    if (carg.length) partes.push('Carga ' + carg.join('/'));
+    // "Cam" y no "CC": CC ya es la cosecha de Cañadas.
+    if (rec.carga_camion_kg50 || rec.carga_camion_kg25 || rec.carga_camion_otro) partes.push('Cam');
     if (rec.movimiento_estiba_kg50 || rec.movimiento_estiba_kg25 || rec.movimiento_estiba_otro) partes.push('ME');
     return partes.join(' ');
   };
@@ -602,14 +620,16 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
       return isNaN(n) ? 0 : n;
     };
     for (const rec of Object.values(empMap)) {
+      // La cosecha se lee de la COLUMNA, no del texto: desde que se abrio en
+      // Cañadas/Inv el "C:" ya no se escribe y sacarlo de ahi daba cero.
+      kg += Number(rec.cosecha) || 0;
       const workValue: string = rec.work_value != null ? String(rec.work_value) : "";
       if (workValue.includes('|')) {
         const segs = workValue.split('|');
         horas += parseHorasSegment(segs[0]);
         for (const seg of segs.slice(1)) {
           if (seg.startsWith('C:')) {
-            const v = parseFloat(seg.slice(2).replace(',', '.'));
-            if (!isNaN(v)) kg += v;
+            // ya contada desde la columna, aca no se suma de nuevo
           } else if (seg.startsWith('AB:')) {
             // El "$" es de las tarjas viejas, que traian el signo adentro del valor.
             const v = parseFloat(seg.slice(3).replace(/[$\s]/g, '').replace(',', '.'));
@@ -2505,12 +2525,16 @@ export default function App() {
                       const data = await res.json();
                       if (data.rows && Array.isArray(data.rows)) {
                           for (const att of data.rows) {
+                              // Igual que arriba: la cosecha sale de la columna.
+                              sC += Number(att.cosecha) || 0;
                               // Tipos nuevos: vienen ya tipados en columnas propias del reporte.
                               sKm += Number(att.km_viajes) || 0;
                               sFum += Number(att.has_fumigadas) || 0;
                               sSiembra += Number(att.siembra_trilla) || 0;
                               sBols += Number(att.bolseros) || 0;
-                              sEtiq += Number(att.etiquetado) || 0;
+                              sEtiq += (Number(att.etiquetado) || 0)
+                                  + (Number(att.etiquetado_lata_185) || 0) + (Number(att.etiquetado_lata_750) || 0)
+                                  + (Number(att.etiquetado_lata_2500) || 0) + (Number(att.etiquetado_lata_8kg) || 0);
                               if (att.carga_camion_kg50 || att.carga_camion_kg25 || att.carga_camion_otro) sCamion++;
                               if (att.movimiento_estiba_kg50 || att.movimiento_estiba_kg25 || att.movimiento_estiba_otro) sEstiba++;
                               // La API ya filtra por start_date/end_date, no hace falta revalidar la fecha
@@ -2523,8 +2547,7 @@ export default function App() {
                                   if (hrs > 0) sH += hrs;
                                   for (const seg of segs.slice(1)) {
                                       if (seg.startsWith('C:')) {
-                                          const kg = parseFloat(seg.slice(2).replace(',', '.'));
-                                          if (!isNaN(kg)) sC += kg;
+                                          // ya contada desde la columna
                                       } else if (seg.startsWith('AB:')) {
                                           const ab = parseFloat(seg.slice(3).replace(/[$\s]/g, '').replace(',', '.'));
                                           if (!isNaN(ab)) sI += ab;
@@ -2536,8 +2559,8 @@ export default function App() {
                                       }
                                   }
                               } else if (val === 'C') {
-                                  // cosecha sin cantidad
-                                  sC += 1;
+                                  // cosecha vieja sin cantidad: no aporta ningun numero,
+                                  // y si tenia cantidad ya vino por la columna.
                               } else if (val.startsWith('$')) {
                                   const ab = parseFloat(val.slice(1).replace(/\s/g, '').replace(',', '.'));
                                   if (!isNaN(ab)) sI += ab;
