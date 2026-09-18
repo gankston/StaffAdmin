@@ -180,6 +180,7 @@ function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: 
   // total; estas dicen de que tipo salio.
   const cosechaCanadasTotales = isGlobal ? globalStats.cosechaCanadasTotales : null;
   const cosechaInvTotales = isGlobal ? globalStats.cosechaInvTotales : null;
+  const cosechaBananasTotales = isGlobal ? globalStats.cosechaBananasTotales : null;
   const tanteroInvTotales = isGlobal ? globalStats.tanteroInvTotales : null;
   const tanteroCampoTotales = isGlobal ? globalStats.tanteroCampoTotales : null;
   const descargaTotales = isGlobal ? globalStats.descargaTotales : null;
@@ -216,6 +217,7 @@ function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: 
         {stat("Abonada", fmtKg(abonadaTotales))}
         {stat("Cosecha Cañadas", fmtKg(cosechaCanadasTotales))}
         {stat("Cosecha Inv", fmtKg(cosechaInvTotales))}
+        {stat("Cosecha Bananas", fmtKg(cosechaBananasTotales))}
         {stat("Tantero Inv", fmtKg(tanteroInvTotales))}
         {stat("Tantero Campo", fmtKg(tanteroCampoTotales))}
         {stat("Has Fumigadas", fmtKg(hasFumigadasTotales))}
@@ -499,6 +501,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     // mismas que en la app y en el Excel.
     if (rec.cosecha_canadas) partes.push(`CC${rec.cosecha_canadas}`);
     if (rec.cosecha_inv) partes.push(`CI${rec.cosecha_inv}`);
+    if (rec.cosecha_bananas) partes.push(`CB${rec.cosecha_bananas}`);
     if (rec.tantero_invernadero) partes.push(`TI${rec.tantero_invernadero}`);
     if (rec.tantero_campo) partes.push(`TC${rec.tantero_campo}`);
     const latas = [
@@ -2226,7 +2229,7 @@ export default function App() {
     // directo de ahi (no hay que reparsear texto como con horas/cosecha/etc).
     hasFumigadasTotales: 0, siembraTrillaTotales: 0, bolserosTotales: 0, etiquetadoTotales: 0,
     camionCargas: 0, estibaCargas: 0,
-    cosechaCanadasTotales: 0, cosechaInvTotales: 0, tanteroInvTotales: 0, tanteroCampoTotales: 0,
+    cosechaCanadasTotales: 0, cosechaInvTotales: 0, cosechaBananasTotales: 0, tanteroInvTotales: 0, tanteroCampoTotales: 0,
     descargaTotales: 0, cargaTotales: 0,
   });
 
@@ -2523,7 +2526,7 @@ export default function App() {
       let totalCajas = 0;
       let totalCajones = 0;
       let totalFum = 0, totalSiembra = 0, totalBols = 0, totalEtiq = 0, totalCamion = 0, totalEstiba = 0;
-      let totalCC = 0, totalCI = 0, totalTI = 0, totalTC = 0, totalDesc = 0, totalCarga = 0;
+      let totalCC = 0, totalCI = 0, totalCB = 0, totalTI = 0, totalTC = 0, totalDesc = 0, totalCarga = 0;
       if (sectors && sectors.length > 0) {
           const parseHorasSegment = (seg: string): number => {
               const s = seg.startsWith('H ') ? seg.slice(2) : seg;
@@ -2533,7 +2536,7 @@ export default function App() {
           const results = await Promise.all(sectors.map(async (sec) => {
               let sH = 0, sC = 0, sI = 0, sCj = 0, sCn = 0;
               let sFum = 0, sSiembra = 0, sBols = 0, sEtiq = 0, sCamion = 0, sEstiba = 0;
-              let sCC = 0, sCI = 0, sTI = 0, sTC = 0, sDesc = 0, sCarga = 0;
+              let sCC = 0, sCI = 0, sCB = 0, sTI = 0, sTC = 0, sDesc = 0, sCarga = 0;
               const url = `https://staffaxis-new-version-production.up.railway.app/api/admin/report?sector_id=${encodeURIComponent(sec.apiId)}&start_date=${todayStr}&end_date=${todayStr}`;
               try {
                   const res = await fetch(url, { headers });
@@ -2546,6 +2549,7 @@ export default function App() {
                               // Tipos nuevos: vienen ya tipados en columnas propias del reporte.
                               sCC += Number(att.cosecha_canadas) || 0;
                               sCI += Number(att.cosecha_inv) || 0;
+                              sCB += Number(att.cosecha_bananas) || 0;
                               sTI += Number(att.tantero_invernadero) || 0;
                               sTC += Number(att.tantero_campo) || 0;
                               sDesc += (Number(att.descarga_jaula) || 0) + (Number(att.descarga_camion) || 0);
@@ -2601,13 +2605,13 @@ export default function App() {
                   console.error("[Stats] Error for sector", sec.name, err);
               }
               return { sH, sC, sI, sCj, sCn, sFum, sSiembra, sBols, sEtiq, sCamion, sEstiba,
-                       sCC, sCI, sTI, sTC, sDesc, sCarga };
+                       sCC, sCI, sCB, sTI, sTC, sDesc, sCarga };
           }));
           for (const r of results) {
               totalH += r.sH; totalCosecha += r.sC; totalAbonada += r.sI; totalCajas += r.sCj; totalCajones += r.sCn;
               totalFum += r.sFum; totalSiembra += r.sSiembra; totalBols += r.sBols; totalEtiq += r.sEtiq;
               totalCamion += r.sCamion; totalEstiba += r.sEstiba;
-              totalCC += r.sCC; totalCI += r.sCI; totalTI += r.sTI; totalTC += r.sTC;
+              totalCC += r.sCC; totalCI += r.sCI; totalCB += r.sCB; totalTI += r.sTI; totalTC += r.sTC;
               totalDesc += r.sDesc; totalCarga += r.sCarga;
           }
       }
@@ -2617,7 +2621,7 @@ export default function App() {
         ausentes: ausentesCount, horasTotales: totalH, cosechaTotales: totalCosecha, abonadaTotales: totalAbonada, cajasTotales: totalCajas, cajonesTotales: totalCajones,
         hasFumigadasTotales: totalFum, siembraTrillaTotales: totalSiembra, bolserosTotales: totalBols, etiquetadoTotales: totalEtiq,
         camionCargas: totalCamion, estibaCargas: totalEstiba,
-        cosechaCanadasTotales: totalCC, cosechaInvTotales: totalCI,
+        cosechaCanadasTotales: totalCC, cosechaInvTotales: totalCI, cosechaBananasTotales: totalCB,
         tanteroInvTotales: totalTI, tanteroCampoTotales: totalTC,
         descargaTotales: totalDesc, cargaTotales: totalCarga,
       });

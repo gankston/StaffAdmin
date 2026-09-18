@@ -40,6 +40,7 @@ export interface ExportParams {
         etiquetado_lata_8kg?: number | null;
         cosecha_canadas?: number | null;
         cosecha_inv?: number | null;
+        cosecha_bananas?: number | null;
         tantero_invernadero?: number | null;
         tantero_campo?: number | null;
         cosecha?: number | null;
@@ -183,7 +184,7 @@ export async function exportExcel(
         // usa: la columna se va a ir vaciando sola.
         const cosechaVieja = (a: Record<string, any>): number => {
             const total = Number(a.cosecha) || 0;
-            const conOrigen = (Number(a.cosecha_canadas) || 0) + (Number(a.cosecha_inv) || 0);
+            const conOrigen = (Number(a.cosecha_canadas) || 0) + (Number(a.cosecha_inv) || 0) + (Number(a.cosecha_bananas) || 0);
             return Math.max(0, total - conOrigen);
         };
 
@@ -240,6 +241,7 @@ export async function exportExcel(
             // siendo el total del dia; estas dos dicen de donde salio.
             { header: 'CC - COSECHA CAÑADAS', campo: 'cosecha_canadas', tipo: 'num' },
             { header: 'CI - COSECHA INV', campo: 'cosecha_inv', tipo: 'num' },
+            { header: 'CB - COSECHA BANANAS', campo: 'cosecha_bananas', tipo: 'num' },
             // Tantero: solo los sectores con "Cañadas" en el nombre.
             { header: 'TI - TANTERO INVERNADERO', campo: 'tantero_invernadero', tipo: 'num' },
             { header: 'TC - TANTERO CAMPO', campo: 'tantero_campo', tipo: 'num' },
@@ -273,6 +275,7 @@ export async function exportExcel(
             // CI = cosecha Raigon/Inv, TI = tantero invernadero, TC = tantero campo.
             if (a.cosecha_canadas) partes.push(`CC:${a.cosecha_canadas}`);
             if (a.cosecha_inv) partes.push(`CI:${a.cosecha_inv}`);
+            if (a.cosecha_bananas) partes.push(`CB:${a.cosecha_bananas}`);
             if (a.tantero_invernadero) partes.push(`TI:${a.tantero_invernadero}`);
             if (a.tantero_campo) partes.push(`TC:${a.tantero_campo}`);
             if (a.has_fumigadas) partes.push(`Ha ${a.has_fumigadas}`);
