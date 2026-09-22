@@ -516,8 +516,11 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     const carg = [rec.carga_jaula ? `J${rec.carga_jaula}` : '', rec.carga_camion_cantidad ? `C${rec.carga_camion_cantidad}` : ''].filter(Boolean);
     if (carg.length) partes.push('Carga ' + carg.join('/'));
     // "Cam" y no "CC": CC ya es la cosecha de Cañadas.
-    if (rec.carga_camion_kg50 || rec.carga_camion_kg25 || rec.carga_camion_otro) partes.push('Cam');
-    if (rec.movimiento_estiba_kg50 || rec.movimiento_estiba_kg25 || rec.movimiento_estiba_otro) partes.push('ME');
+    // Con la cantidad de bolsas al lado cuando la hay: "Cam 340", "ME 120".
+    const bolsasCam = (Number(rec.carga_camion_bolsas_50) || 0) + (Number(rec.carga_camion_bolsas_25) || 0) + (Number(rec.carga_camion_bolsas_otro) || 0);
+    const bolsasME = (Number(rec.movimiento_estiba_bolsas_50) || 0) + (Number(rec.movimiento_estiba_bolsas_25) || 0) + (Number(rec.movimiento_estiba_bolsas_otro) || 0);
+    if (rec.carga_camion_kg50 || rec.carga_camion_kg25 || rec.carga_camion_otro) partes.push(bolsasCam ? `Cam ${bolsasCam}` : 'Cam');
+    if (rec.movimiento_estiba_kg50 || rec.movimiento_estiba_kg25 || rec.movimiento_estiba_otro) partes.push(bolsasME ? `ME ${bolsasME}` : 'ME');
     return partes.join(' ');
   };
 

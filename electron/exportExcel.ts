@@ -48,6 +48,12 @@ export interface ExportParams {
         descarga_camion?: number | null;
         carga_jaula?: number | null;
         carga_camion_cantidad?: number | null;
+        carga_camion_bolsas_50?: number | null;
+        carga_camion_bolsas_25?: number | null;
+        carga_camion_bolsas_otro?: number | null;
+        movimiento_estiba_bolsas_50?: number | null;
+        movimiento_estiba_bolsas_25?: number | null;
+        movimiento_estiba_bolsas_otro?: number | null;
         carga_camion_kg50?: boolean | null;
         carga_camion_kg25?: boolean | null;
         carga_camion_otro?: string | null;
@@ -152,10 +158,12 @@ export async function exportExcel(
             if (a.siembra_trilla) partes.push(`Siembra/Trilla ${a.siembra_trilla}`);
             if (a.bolseros) partes.push(`Bolseros ${a.bolseros}`);
             if (a.etiquetado) partes.push(`Etiquetado ${a.etiquetado}`);
-            const camion = [a.carga_camion_kg50 ? '50kg' : '', a.carga_camion_kg25 ? '25kg' : '', a.carga_camion_otro ? `Otro:${a.carga_camion_otro}` : '']
+            // Las bolsas van pegadas al peso: "50kg:340" se lee de una.
+            const conBolsas = (peso: string, n: number | null | undefined) => (n ? `${peso}:${n}` : peso);
+            const camion = [a.carga_camion_kg50 ? conBolsas('50kg', a.carga_camion_bolsas_50) : '', a.carga_camion_kg25 ? conBolsas('25kg', a.carga_camion_bolsas_25) : '', a.carga_camion_otro ? conBolsas(`Otro:${a.carga_camion_otro}`, a.carga_camion_bolsas_otro) : '']
                 .filter(Boolean).join(' ');
             if (camion) partes.push(`Carga Camión ${camion}`);
-            const estiba = [a.movimiento_estiba_kg50 ? '50kg' : '', a.movimiento_estiba_kg25 ? '25kg' : '', a.movimiento_estiba_otro ? `Otro:${a.movimiento_estiba_otro}` : '']
+            const estiba = [a.movimiento_estiba_kg50 ? conBolsas('50kg', a.movimiento_estiba_bolsas_50) : '', a.movimiento_estiba_kg25 ? conBolsas('25kg', a.movimiento_estiba_bolsas_25) : '', a.movimiento_estiba_otro ? conBolsas(`Otro:${a.movimiento_estiba_otro}`, a.movimiento_estiba_bolsas_otro) : '']
                 .filter(Boolean).join(' ');
             if (estiba) partes.push(`Mov. Estiba ${estiba}`);
             return partes.join(' | ');
@@ -251,6 +259,14 @@ export async function exportExcel(
             { header: 'ETIQUETADO', campo: 'etiquetado', tipo: 'num' },
             { header: 'CARGA CAMION', campo: 'carga_camion', tipo: 'peso' },
             { header: 'MOV. ESTIBA', campo: 'movimiento_estiba', tipo: 'peso' },
+            // Cuantas bolsas de cada peso. Son columnas 'num', asi que se caen
+            // solas del Excel en los sectores que no las usan.
+            { header: 'CAMION 50KG (BOLSAS)', campo: 'carga_camion_bolsas_50', tipo: 'num' },
+            { header: 'CAMION 25KG (BOLSAS)', campo: 'carga_camion_bolsas_25', tipo: 'num' },
+            { header: 'CAMION OTRO (BOLSAS)', campo: 'carga_camion_bolsas_otro', tipo: 'num' },
+            { header: 'ESTIBA 50KG (BOLSAS)', campo: 'movimiento_estiba_bolsas_50', tipo: 'num' },
+            { header: 'ESTIBA 25KG (BOLSAS)', campo: 'movimiento_estiba_bolsas_25', tipo: 'num' },
+            { header: 'ESTIBA OTRO (BOLSAS)', campo: 'movimiento_estiba_bolsas_otro', tipo: 'num' },
             // Etiquetado abierto por tamaño de lata
             { header: 'LATA 185', campo: 'etiquetado_lata_185', tipo: 'num' },
             { header: 'LATA 750', campo: 'etiquetado_lata_750', tipo: 'num' },
