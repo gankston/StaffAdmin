@@ -520,6 +520,9 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     const bolsasCam = (Number(rec.carga_camion_bolsas_50) || 0) + (Number(rec.carga_camion_bolsas_25) || 0) + (Number(rec.carga_camion_bolsas_otro) || 0);
     const bolsasME = (Number(rec.movimiento_estiba_bolsas_50) || 0) + (Number(rec.movimiento_estiba_bolsas_25) || 0) + (Number(rec.movimiento_estiba_bolsas_otro) || 0);
     if (rec.carga_camion_kg50 || rec.carga_camion_kg25 || rec.carga_camion_otro) partes.push(bolsasCam ? `Cam ${bolsasCam}` : 'Cam');
+    const bolsas = (Number(rec.bolsas_25) || 0) + (Number(rec.bolsas_50) || 0);
+    if (bolsas) partes.push(`Bol ${bolsas}`);
+    if (rec.cambio_bolsa) partes.push(`CBo ${rec.cambio_bolsa}`);
     if (rec.movimiento_estiba_kg50 || rec.movimiento_estiba_kg25 || rec.movimiento_estiba_otro) partes.push(bolsasME ? `ME ${bolsasME}` : 'ME');
     return partes.join(' ');
   };
