@@ -5,7 +5,7 @@ import { autoUpdater } from 'electron-updater';
 import path, { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { toggleSectorState } from './database';
-import { fetchSectors, fetchEmployees, fetchAttendances, getFotoBase64, uploadFotoFromFile, deleteFotoApi } from './apiClient';
+import { fetchSectors, fetchEmployees, fetchAttendances, getFotoBase64, uploadFotoFromFile, deleteFotoApi, subirCertificadoDesdeArchivo, bajarCertificado } from './apiClient';
 import log from 'electron-log';
 
 // ─── electron-log configuration ────────────────────────────────────────────
@@ -186,6 +186,39 @@ app.whenReady().then(() => {
         });
         if (result.canceled || result.filePaths.length === 0) return null;
         return result.filePaths[0];
+    });
+
+    // ─── Certificados medicos ───────────────────────────────────────────────
+    ipcMain.handle('cert-elegir-archivo', async () => {
+        if (!mainWindow) return null;
+        const result = await dialog.showOpenDialog(mainWindow, {
+            title: 'Certificado médico: elegí la foto o el PDF',
+            properties: ['openFile'],
+            filters: [{ name: 'Foto o PDF', extensions: ['jpg', 'jpeg', 'png', 'pdf'] }],
+        });
+        if (result.canceled || result.filePaths.length === 0) return null;
+        return result.filePaths[0];
+    });
+
+    ipcMain.handle('cert-subir', async (_event, employeeId: string, fechas: string[], observaciones: string, filePath: string) => {
+        try {
+            return await subirCertificadoDesdeArchivo(employeeId, fechas, observaciones, filePath, adminToken);
+        } catch (error) {
+            log.error(`[IPC cert-subir]`, error);
+            return { ok: false, error: 'No se pudo subir el certificado (sin conexión?)' };
+        }
+    });
+
+    // Lo abre con el programa que tenga Windows para fotos o PDF.
+    ipcMain.handle('cert-abrir', async (_event, id: string) => {
+        try {
+            const ruta = await bajarCertificado(id, app.getPath('temp'), adminToken);
+            const error = await shell.openPath(ruta);
+            return error ? { ok: false, error } : { ok: true };
+        } catch (error) {
+            log.error(`[IPC cert-abrir]`, error);
+            return { ok: false, error: 'No se pudo abrir el certificado' };
+        }
     });
 
     // ─── Google OAuth ────────────────────────────────────────────────────────

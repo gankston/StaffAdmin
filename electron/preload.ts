@@ -14,6 +14,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     uploadFoto: (employeeId: string, lado: string, filePath: string) => ipcRenderer.invoke('upload-foto', employeeId, lado, filePath),
     deleteFoto: (employeeId: string, lado: string) => ipcRenderer.invoke('delete-foto', employeeId, lado),
     openFileDialog: () => ipcRenderer.invoke('open-file-dialog'),
+    certElegirArchivo: () => ipcRenderer.invoke('cert-elegir-archivo'),
+    certSubir: (employeeId: string, fechas: string[], observaciones: string, filePath: string) =>
+        ipcRenderer.invoke('cert-subir', employeeId, fechas, observaciones, filePath),
+    certAbrir: (id: string) => ipcRenderer.invoke('cert-abrir', id),
 });
 
 export type ElectronAPI = {
@@ -29,4 +33,8 @@ export type ElectronAPI = {
     uploadFoto: (employeeId: string, lado: string, filePath: string) => Promise<{ success: boolean; error?: string }>;
     deleteFoto: (employeeId: string, lado: string) => Promise<{ success: boolean; error?: string }>;
     openFileDialog: () => Promise<string | null>;
+    certElegirArchivo: () => Promise<string | null>;
+    certSubir: (employeeId: string, fechas: string[], observaciones: string, filePath: string) =>
+        Promise<{ ok: true } | { ok: false; error: string; fechas?: string[] }>;
+    certAbrir: (id: string) => Promise<{ ok: boolean; error?: string }>;
 }

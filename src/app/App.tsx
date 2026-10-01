@@ -49,7 +49,10 @@ import {
   Smartphone,
   Crown,
   Users,
+  Stethoscope,
 } from "lucide-react";
+import { DialogoCertificado, traerCertificados, type CertificadoMedico } from "./DialogoCertificado";
+import { GLOSARIO_CM, horasDeCertificado } from "../../electron/certificadoMedico";
 
 
 type CardState = "sent" | "missing";
@@ -457,6 +460,30 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     return () => { cancelled = true; };
   }, [sector.apiId, periodMonth, periodYear]);
 
+  // ── Certificados medicos del período (vista previa) ──────────────────────
+  const [certEmp, setCertEmp] = useState<Employee | null>(null);
+  const [previewCerts, setPreviewCerts] = useState<CertificadoMedico[]>([]);
+  const [recargaCerts, setRecargaCerts] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const { startDate, endDate } = computePeriodRange(periodMonth, periodYear);
+    traerCertificados({ sector_id: sector.apiId, start_date: startDate, end_date: endDate })
+      .then((c) => { if (!cancelled) setPreviewCerts(c); })
+      .catch((err) => {
+        console.error('[Preview] Error cargando certificados:', err);
+        if (!cancelled) setPreviewCerts([]);
+      });
+    return () => { cancelled = true; };
+  }, [sector.apiId, periodMonth, periodYear, recargaCerts]);
+  // employee_id -> días con certificado
+  const cmMap: Record<string, Set<string>> = {};
+  for (const c of previewCerts) {
+    if (!cmMap[c.employee_id]) cmMap[c.employee_id] = new Set();
+    c.fechas.forEach((f) => cmMap[c.employee_id].add(f));
+  }
+  // La celda del día con certificado: en rojo y con la sigla, como pidió RRHH.
+  const CELDA_CM = { bg: "#C62828", color: "#fff", text: "CM" };
+
   // Días del período, en orden — genera columnas de la grilla
   const previewDays = (() => {
     const { startDate, endDate } = computePeriodRange(periodMonth, periodYear);
@@ -631,8 +658,12 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
 
   // Total del período por empleado — cuenta horas + cosecha + cajas + cajones + abonada, no solo horas.
   // Mismo criterio que exportExcel.ts para que el total coincida con el del Excel.
-  const computeEmployeeTotal = (empMap: Record<string, any>) => {
-    let horas = 0, kg = 0, abonada = 0, cajas = 0, cajones = 0;
+  // Los días con certificado médico: la tarja de ese día no cuenta y en su lugar
+  // suman 8 h (lunes a viernes) o 4 h (sábado), igual que en el Excel.
+  const computeEmployeeTotal = (empMapCompleto: Record<string, any>, cmDias?: Set<string>) => {
+    const empMap = Object.fromEntries(Object.entries(empMapCompleto).filter(([fecha]) => !cmDias?.has(fecha)));
+    const diasCM = [...(cmDias ?? [])];
+    let horas = diasCM.reduce((acc, f) => acc + horasDeCertificado(f), 0), kg = 0, abonada = 0, cajas = 0, cajones = 0;
     // Tipos de carga nuevos: los numéricos se suman, camión/estiba se cuentan como días
     let km = 0, ha = 0, st = 0, bol = 0, et = 0, diasCC = 0, diasME = 0;
     const parseHorasSegment = (seg: string): number => {
@@ -695,6 +726,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     if (et > 0) partes.push(`Etiquetado ${et}`);
     if (diasCC > 0) partes.push(`Carga Camión ${diasCC}d`);
     if (diasME > 0) partes.push(`Mov. Estiba ${diasME}d`);
+    if (diasCM.length > 0) partes.push(`CM ${diasCM.length}d`);
     return partes.length > 0 ? partes.join(' | ') : '—';
   };
 
@@ -749,6 +781,18 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
         console.warn('[Export] No se pudieron cargar traslados:', trErr);
       }
 
+      // 3c. Certificados médicos del período. Si no se pueden traer NO se exporta:
+      // un Excel sin los certificados tendría las horas mal y nadie se daría cuenta.
+      let certificados: CertificadoMedico[] = [];
+      try {
+        certificados = await traerCertificados({ sector_id: sector.apiId, start_date: startDate, end_date: endDate });
+        console.log(`[Export] Certificados médicos del período: ${certificados.length}`);
+      } catch (certErr) {
+        console.error('[Export] No se pudieron cargar los certificados:', certErr);
+        alert('No se pudieron traer los certificados médicos del período. Probá de nuevo en un momento.');
+        return;
+      }
+
       console.log(`[Export] Datos para excel: ${employees.length} empleados, ${attendances.length} asistencias, ${absences.length} ausencias, ${transfers.length} traslados`);
 
       // 4. Generar Excel con asistencias + ausencias + traslados
@@ -759,6 +803,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
         employees: employees,
         attendances: attendances,
         absences: absences,
+        certificados: certificados,
         transfers: transfers,
         periodMonth,
         periodYear,
@@ -1159,6 +1204,16 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
                               )}
                               {isAdmin && (
                                 <button
+                                  onClick={() => setCertEmp(emp)}
+                                  title="Certificado médico"
+                                  className="p-1 rounded-lg transition-colors"
+                                  style={{ cursor: "pointer", color: "#EF5350", background: "rgba(239,83,80,0.12)", border: "1px solid rgba(239,83,80,0.3)" }}
+                                >
+                                  <Stethoscope size={11} />
+                                </button>
+                              )}
+                              {isAdmin && (
+                                <button
                                   onClick={() => openEditDialog(emp)}
                                   title="Editar empleado"
                                   className="p-1 rounded-lg transition-colors"
@@ -1192,11 +1247,11 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
                           </td>
                           <td style={{ position: "sticky", left: 430, zIndex: 1, width: 140, background: rowBg, borderRight: "1px solid rgba(255,255,255,0.15)", borderBottom: "1px solid rgba(255,255,255,0.05)", padding: "8px 10px" }}>
                             <span style={{ fontSize: 11, fontWeight: 700, color: "white", whiteSpace: "nowrap" }}>
-                              {previewLoading ? "—" : computeEmployeeTotal(empMap)}
+                              {previewLoading ? "—" : computeEmployeeTotal(empMap, cmMap[emp.id])}
                             </span>
                           </td>
                           {previewDays.map((day) => {
-                            const cell = renderDayCell(empMap[day]);
+                            const cell = cmMap[emp.id]?.has(day) ? CELDA_CM : renderDayCell(empMap[day]);
                             return (
                               <td key={day} style={{ width: 52, background: rowBg, borderBottom: "1px solid rgba(255,255,255,0.05)", padding: 3, textAlign: "center" }}>
                                 <div style={{ background: cell.bg, color: cell.color, borderRadius: 6, padding: "4px 0", fontSize: 10, fontWeight: 700 }}>
@@ -1212,6 +1267,11 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
               </table>
             </div>
           )}
+          {/* Glosario de la vista previa */}
+          <div className="flex items-center gap-2" style={{ marginTop: 8, flexShrink: 0 }}>
+            <span style={{ background: CELDA_CM.bg, color: CELDA_CM.color, borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 700 }}>CM</span>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>{GLOSARIO_CM}</span>
+          </div>
         </div>
 
         <div style={{ height: 1, background: "rgba(255,255,255,0.07)", marginBottom: 12, marginTop: 12, flexShrink: 0 }} />
@@ -1308,6 +1368,18 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
         </div>
       </div>
     </div>
+
+    {/* ── Dialog certificado médico ─────────────────────────────────────── */}
+    {certEmp && (
+      <DialogoCertificado
+        empleado={certEmp}
+        horasCargadas={Object.fromEntries(
+          Object.entries(previewMap[certEmp.id] ?? {}).map(([fecha, rec]) => [fecha, Number(rec?.hours) || 0])
+        )}
+        onCerrar={() => setCertEmp(null)}
+        onCambio={() => setRecargaCerts((n) => n + 1)}
+      />
+    )}
 
     {/* ── Dialog editar empleado (con fotos) ─────────────────────────────── */}
     {editDialogEmp && (

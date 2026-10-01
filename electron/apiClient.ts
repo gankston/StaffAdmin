@@ -560,3 +560,57 @@ export async function deleteFotoApi(employeeId: string, lado: string, adminToken
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
+
+// ─── Certificados medicos ─────────────────────────────────────────────────────
+
+const TIPO_POR_EXTENSION: Record<string, string> = {
+    '.pdf': 'application/pdf',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+};
+
+/**
+ * Sube un certificado: el archivo (foto o PDF) y los dias que cubre. Devuelve el
+ * error tal cual lo explica el server (ej. "Esos días ya tienen certificado").
+ */
+export async function subirCertificadoDesdeArchivo(
+    employeeId: string,
+    fechas: string[],
+    observaciones: string,
+    filePath: string,
+    adminToken: string,
+): Promise<{ ok: true } | { ok: false; error: string; fechas?: string[] }> {
+    const tipo = TIPO_POR_EXTENSION[nodePath.extname(filePath).toLowerCase()];
+    if (!tipo) return { ok: false, error: 'El certificado tiene que ser una foto (JPG o PNG) o un PDF' };
+    // Mismo tope que el server: mejor avisar ya que esperar a que suban 16 MB para el rechazo.
+    if (fs.statSync(filePath).size > 15 * 1024 * 1024) {
+        return { ok: false, error: 'El archivo pesa más de 15 MB. Sacale una foto o escanealo con menos calidad.' };
+    }
+    const buffer = fs.readFileSync(filePath);
+    const form = new FormData();
+    form.append('archivo', new Blob([buffer], { type: tipo }), nodePath.basename(filePath));
+    const qs = new URLSearchParams({ employee_id: employeeId, fechas: fechas.join(',') });
+    if (observaciones.trim()) qs.set('observaciones', observaciones.trim());
+    const res = await fetch(`${API_BASE}/api/admin/certificados?${qs}`, {
+        method: 'POST',
+        headers: { 'x-admin-token': adminToken },
+        body: form,
+    });
+    if (res.ok) return { ok: true };
+    const d: any = await res.json().catch(() => ({}));
+    return { ok: false, error: d.error || `Error ${res.status}`, fechas: d.fechas };
+}
+
+/** Baja el archivo del certificado a la carpeta temporal y devuelve la ruta. */
+export async function bajarCertificado(id: string, carpeta: string, adminToken: string): Promise<string> {
+    const res = await fetch(`${API_BASE}/api/admin/certificados/${id}/archivo`, {
+        headers: { 'x-admin-token': adminToken },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const tipo = res.headers.get('content-type') ?? '';
+    const ext = tipo.includes('pdf') ? '.pdf' : tipo.includes('png') ? '.png' : '.jpg';
+    const destino = nodePath.join(carpeta, `certificado_${id}${ext}`);
+    fs.writeFileSync(destino, Buffer.from(await res.arrayBuffer()));
+    return destino;
+}

@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as XLSX from 'xlsx';
 import { nowPartsInAppTz } from './datetime';
+import { TEXTO_CELDA_CM, GLOSARIO_CM, horasDeCertificado, observacionCertificado } from './certificadoMedico';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,11 @@ export interface ExportParams {
         employee_id: string;
         start_date: string;  // YYYY-MM-DD
         end_date: string;    // YYYY-MM-DD
+        [key: string]: any;
+    }>;
+    certificados?: Array<{   // certificados medicos de /api/admin/certificados
+        employee_id: string;
+        fechas: string[];    // YYYY-MM-DD, los dias que cubre
         [key: string]: any;
     }>;
     transfers?: Array<{      // traslados del período
@@ -191,6 +197,42 @@ export async function exportExcel(
             return '';
         };
 
+        // ── Certificados medicos ─────────────────────────────────────────
+        // El dia con certificado MANDA sobre todo: la casilla dice CERTIFICADO
+        // MEDICO y suma 8 h (lunes a viernes) o 4 h (sabado). Si ese dia ademas
+        // tenia una tarja cargada, la tarja NO cuenta para nada (ni horas ni
+        // cosecha ni otros tipos): se reemplaza, y se aclara en OBSERVACIONES.
+        // La tarja no se borra de la base: si se borra el certificado, vuelve.
+        const diasDelPeriodo = new Set(dateStrings);
+        // Solo cuentan los certificados de empleados que ESTAN en la planilla. Uno
+        // dado de baja no tiene fila: si su certificado contara, se le descartaria
+        // la tarja de ese dia y las horas del certificado no aparecerian en ningun lado.
+        const enLaLista = new Set((params?.employees ?? []).map(e => String(e.id)));
+        const cmPorEmpleado = new Map<string, Set<string>>();
+        (params?.certificados ?? []).forEach(c => {
+            const empId = String(c.employee_id);
+            if (!enLaLista.has(empId)) return;
+            (c.fechas ?? []).forEach(f => {
+                const fecha = String(f).slice(0, 10);
+                if (!diasDelPeriodo.has(fecha)) return;
+                if (!cmPorEmpleado.has(empId)) cmPorEmpleado.set(empId, new Set());
+                cmPorEmpleado.get(empId)!.add(fecha);
+            });
+        });
+        const hayCM = cmPorEmpleado.size > 0;
+        const esDiaCM = (a: Record<string, any>) =>
+            !!a.date && !!cmPorEmpleado.get(String(a.employee_id))?.has(String(a.date).slice(0, 10));
+        // Las tarjas que el certificado reemplaza: se avisan en OBSERVACIONES (el
+        // texto se arma mas abajo, cuando ya se sabe que datos traia cada una).
+        const reemplazadasPorEmp = new Map<string, Array<Record<string, any>>>();
+        (params?.attendances ?? []).filter(esDiaCM).forEach(a => {
+            const empId = String(a.employee_id);
+            if (!reemplazadasPorEmp.has(empId)) reemplazadasPorEmp.set(empId, []);
+            reemplazadasPorEmp.get(empId)!.push(a);
+        });
+        // De aca para abajo TODO usa estas asistencias: sin las de los dias con certificado.
+        const asistenciasSinCM = (params?.attendances ?? []).filter(a => !esDiaCM(a));
+
         // ── Totales verticales por día (lo que cierra la jornada para RRHH) ──
         // Se acumulan leyendo las celdas ya normalizadas de cada empleado ("8H",
         // "0H|C:33", "$36400"), asi hay un solo criterio y no se duplica el parseo.
@@ -216,7 +258,8 @@ export async function exportExcel(
         const acumularPorDia = (celdas: (string | number)[]): void => {
             celdas.forEach((celda, i) => {
                 const acc = totalesPorDia[i];
-                if (!acc || celda === '' || celda == null || celda === 'AUSENTE') return;
+                // Las horas del certificado se suman aparte, en el mismo armado de la fila.
+                if (!acc || celda === '' || celda == null || celda === 'AUSENTE' || celda === TEXTO_CELDA_CM) return;
                 if (typeof celda === 'number') {
                     // Dia de solo horas: la celda ES el numero, no hay nada mas que sacarle.
                     acc.horas += celda;
@@ -240,7 +283,7 @@ export async function exportExcel(
         // Cosecha por dia, leida de la columna. Va aparte de acumularPorDia porque
         // ese lee las celdas ya armadas y el "C:" dejo de escribirse.
         dateStrings.forEach((fecha, i) => {
-            totalesPorDia[i].cosecha = (params?.attendances ?? [])
+            totalesPorDia[i].cosecha = asistenciasSinCM
                 .filter(a => a.date && String(a.date).startsWith(fecha))
                 .reduce((acc, a) => acc + cosechaVieja(a), 0);
         });
@@ -251,7 +294,7 @@ export async function exportExcel(
         // Solo se agregan las que el sector realmente usa, para no ensuciar la planilla
         // con columnas vacias en los sectores que no las tienen.
         const tieneDato = (campo: string) =>
-            (params?.attendances ?? []).some(a => a[campo] !== null && a[campo] !== undefined && a[campo] !== false);
+            asistenciasSinCM.some(a => a[campo] !== null && a[campo] !== undefined && a[campo] !== false);
         const columnasNuevas: Array<{ header: string; campo: string; tipo: 'num' | 'peso' }> = [
             // Cosecha abierta por origen. La columna COSECHA de mas arriba sigue
             // siendo el total del dia; estas dos dicen de donde salio.
@@ -353,7 +396,10 @@ export async function exportExcel(
 
         const filaCabeceras = ['N', 'DNI', params?.sectorName ?? 'SECTOR', ...daysArr,
             'HORAS', 'COSECHA (DATOS VIEJOS)', 'CAJAS', 'CAJONES', 'ABONADA',
-            ...columnasNuevas.map(c => c.header), 'OBSERVACIONES'];
+            ...columnasNuevas.map(c => c.header),
+            // Solo si en el periodo hay algun certificado, para no sumar una columna vacia.
+            ...(hayCM ? ['DIAS CM'] : []),
+            'OBSERVACIONES'];
         // Indices calculados por nombre: antes se hacia con restas sobre la posicion de
         // ABONADA y cualquier columna nueva rompia silenciosamente los totales.
         const colDe = (header: string) => filaCabeceras.indexOf(header);
@@ -371,7 +417,7 @@ export async function exportExcel(
         let granTotalAbonada = 0;
 
         // ── Mapeo de Empleados (Filas 5 en adelante) ─────────────────────
-        const attendances = params?.attendances ?? [];
+        const attendances = asistenciasSinCM;
         const absences = params?.absences ?? [];
         const employees = params?.employees ?? [];
         const transfers = params?.transfers ?? [];
@@ -401,10 +447,26 @@ export async function exportExcel(
         // Agrupar ausencias por employee_id para lookup O(1)
         const absencesByEmp = new Map<string, Array<{ start: string; end: string }>>();
         absences.forEach(a => {
+            // Sin empleado no hay a quien marcarle la ausencia (el server viejo no lo mandaba).
+            if (!a.employee_id) return;
             const empId = String(a.employee_id);
             if (!absencesByEmp.has(empId)) absencesByEmp.set(empId, []);
-            absencesByEmp.get(empId)!.push({ start: a.start_date, end: a.end_date });
+            // Las fechas se comparan como texto 'YYYY-MM-DD': se corta por si viene con hora.
+            absencesByEmp.get(empId)!.push({ start: String(a.start_date).slice(0, 10), end: String(a.end_date).slice(0, 10) });
         });
+        // Horas de una tarja: el primer segmento ("H 8", "8", "H 4|C:33").
+        const horasDeLaTarja = (a: Record<string, any>): number => {
+            const v = parseFloat(String(a.work_value ?? '').split('|')[0].replace(/^H\s*/, '').replace(',', '.'));
+            return !isNaN(v) ? v : Number(a.hours) || 0;
+        };
+
+        // Si una tarja trae algo mas que horas: abonada, cajas, cosecha o un tipo nuevo.
+        const tieneOtrosDatos = (a: Record<string, any>): boolean =>
+            String(a.work_value ?? '').split('|').slice(1).some(seg => seg.trim() !== '')
+            // La abonada en el formato viejo, suelta y con signo: "$500".
+            || String(a.work_value ?? '').trim().startsWith('$')
+            || tiposDelDia(a) !== ''
+            || cosechaVieja(a) > 0;
 
         // 2. Iterar sobre los empleados y agregarlos a la matriz
         employees.forEach((emp, index) => {
@@ -438,18 +500,36 @@ export async function exportExcel(
                 const segAB = String(a.work_value ?? '').split('|').find(x => x.startsWith('AB:'));
                 if (segAB && abonadaEsTexto(segAB.slice(3))) abonadaTextos.push(segAB.slice(3).trim());
             });
-            const empAbsences = absencesByEmp.get(emp.id) ?? [];
+            const empAbsences = absencesByEmp.get(String(emp.id)) ?? [];
+            const ausenciasConHoras: string[] = [];
+            const cmDias = cmPorEmpleado.get(String(emp.id)) ?? new Set<string>();
 
             // Mapa para desglose por sector anterior
             const foreignSectorsMap = new Map<string, number>();
 
-            const horasDelEmpleado = dateStrings.map(dateStr => {
-                // PRIORIDAD 1: ausencia registrada que cubre este día → AUSENTE
+            const horasDelEmpleado = dateStrings.map((dateStr, i) => {
+                // PRIORIDAD 0: certificado medico. Gana sobre la ausencia y sobre la tarja.
+                if (cmDias.has(dateStr)) {
+                    const h = horasDeCertificado(dateStr);
+                    totalHorasEmpleado += h;
+                    totalesPorDia[i].horas += h;
+                    return TEXTO_CELDA_CM;
+                }
+
+                // PRIORIDAD 1: ausencia registrada que cubre este día → AUSENTE.
+                // Salvo que ese dia tenga horas cargadas: la ausencia no borra horas
+                // de nadie. Se toman las horas y se avisa en OBSERVACIONES.
+                const att = empAtts.find(a => a.date && a.date.startsWith(dateStr));
                 const isAbsent = empAbsences.some(abs => abs.start <= dateStr && dateStr <= abs.end);
-                if (isAbsent) return 'AUSENTE';
+                if (isAbsent) {
+                    // Cualquier dato cargado cuenta, no solo las horas: una tarja de
+                    // 0 h con abonada o cajas tampoco se puede perder bajo un AUSENTE.
+                    const horasTarja = att ? horasDeLaTarja(att) : 0;
+                    if (!att || (horasTarja <= 0 && !tieneOtrosDatos(att))) return 'AUSENTE';
+                    ausenciasConHoras.push(`${dateStr.slice(8, 10)}/${dateStr.slice(5, 7)} (${horasTarja > 0 ? `${horasTarja} h` : 'datos cargados'})`);
+                }
 
                 // PRIORIDAD 2: asistencia registrada
-                const att = empAtts.find(a => a.date && a.date.startsWith(dateStr));
                 if (att) {
                     if (att.status === 'Faltante') {
                         return 'AUSENTE';
@@ -587,6 +667,17 @@ export async function exportExcel(
                     : notasAsistencias;
             }
 
+            // El certificado va PRIMERO en observaciones: es lo que explica por que
+            // el total de horas no coincide con lo que se tarjo.
+            const reemplazadas = (reemplazadasPorEmp.get(String(emp.id)) ?? [])
+                .map(a => ({ fecha: String(a.date).slice(0, 10), horas: horasDeLaTarja(a), otros: tieneOtrosDatos(a) }))
+                .filter(r => r.horas > 0 || r.otros);
+            const obsCM = observacionCertificado([...cmDias], reemplazadas);
+            const obsAusencia = ausenciasConHoras.length
+                ? `Ausencia registrada con datos cargados, se tomó lo cargado: ${ausenciasConHoras.join(', ')}`
+                : '';
+            notaOtrosSectores = [obsCM, obsAusencia, notaOtrosSectores].filter(Boolean).join(' | ');
+
             excelData.push([
                 index + 1,
                 emp.dni || (emp as any).document_number || (emp as any).document || 'Sin datos',
@@ -602,6 +693,7 @@ export async function exportExcel(
                     const v = totalNuevos[c.campo] ?? 0;
                     return v > 0 ? fmtNum(v) : '';
                 }),
+                ...(hayCM ? [cmDias.size > 0 ? cmDias.size : ''] : []),
                 notaOtrosSectores
             ]);
         });
@@ -737,6 +829,7 @@ export async function exportExcel(
                     const v = atts.reduce((acc, a) => acc + (Number(a[c.campo]) || 0), 0);
                     return v > 0 ? fmtNum(v) : '';
                 }),
+                ...(hayCM ? [''] : []),
                 notaOrphan,
             ]);
         });
@@ -760,6 +853,9 @@ export async function exportExcel(
             const total = attendances.reduce((acc, a) => acc + (Number(a[c.campo]) || 0), 0);
             if (total > 0) filaFinal[colDe(c.header)] = fmtNum(total);
         });
+        if (hayCM) {
+            filaFinal[colDe('DIAS CM')] = [...cmPorEmpleado.values()].reduce((acc, s) => acc + s.size, 0);
+        }
         excelData.push(filaFinal);
 
         // 5. Cierre por jornada: una fila por concepto con el total de cada día.
@@ -824,6 +920,13 @@ export async function exportExcel(
 
         filasExtra.forEach(f => excelData.push(f));
 
+        // Glosario al pie, solo si en el periodo hay certificados
+        if (hayCM) {
+            excelData.push([]);
+            excelData.push(['', '', 'GLOSARIO']);
+            excelData.push(['', '', `${TEXTO_CELDA_CM}: ${GLOSARIO_CM}`]);
+        }
+
         const ws = XLSX.utils.aoa_to_sheet(excelData);
 
         // ── Setup Column Widths for better reading ───────────────────────
@@ -842,6 +945,7 @@ export async function exportExcel(
         cols.push({ wch: 11 }); // CAJONES  -> "CN 42,02"
         cols.push({ wch: 13 }); // ABONADA  -> "47573,53"
         columnasNuevas.forEach(() => cols.push({ wch: 14 })); // tipos de carga nuevos
+        if (hayCM) cols.push({ wch: 9 }); // DIAS CM
         cols.push({ wch: 30 }); // OBSERVACIONES
 
         ws['!cols'] = cols;
