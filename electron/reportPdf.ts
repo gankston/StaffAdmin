@@ -30,7 +30,7 @@ function fmtDate(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
-function buildHTML(params: PdfReportParams): string {
+export function buildHTML(params: PdfReportParams): string {
   const { categoryName, periodMonth, periodYear, rows, totalHours } = params;
   const fromMonth = periodMonth === 1 ? 12 : periodMonth - 1;
   const fromYear = periodMonth === 1 ? periodYear - 1 : periodYear;
@@ -146,6 +146,13 @@ function buildHTML(params: PdfReportParams): string {
 </html>`;
 }
 
+// La version web lo usa para el nombre que propone al guardar el PDF.
+export function nombreArchivoInforme(params: PdfReportParams): string {
+  const fromMonth = params.periodMonth === 1 ? 12 : params.periodMonth - 1;
+  const fromYear = params.periodMonth === 1 ? params.periodYear - 1 : params.periodYear;
+  return `Informe_${params.categoryName.replace(/\s+/g, '_')}_${fromYear}-${String(fromMonth).padStart(2, '0')}_${params.periodYear}-${String(params.periodMonth).padStart(2, '0')}.pdf`;
+}
+
 export async function generatePdfReport(
   params: PdfReportParams
 ): Promise<{ success: boolean; base64?: string; fileName?: string; error?: string }> {
@@ -167,11 +174,7 @@ export async function generatePdfReport(
       pageSize: 'A4',
     });
 
-    const fromMonth = params.periodMonth === 1 ? 12 : params.periodMonth - 1;
-    const fromYear = params.periodMonth === 1 ? params.periodYear - 1 : params.periodYear;
-    const fileName = `Informe_${params.categoryName.replace(/\s+/g, '_')}_${fromYear}-${String(fromMonth).padStart(2, '0')}_${params.periodYear}-${String(params.periodMonth).padStart(2, '0')}.pdf`;
-
-    return { success: true, base64: buf.toString('base64'), fileName };
+    return { success: true, base64: buf.toString('base64'), fileName: nombreArchivoInforme(params) };
   } catch (err) {
     console.error('[generatePdfReport]', (err as Error).message);
     return { success: false, error: (err as Error).message };

@@ -11,3 +11,4 @@ ts_errors.txt
 StaffAdmin.zip
 .env.local
 .env*.local
+dist-web

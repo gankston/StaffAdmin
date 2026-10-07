@@ -1549,7 +1549,19 @@ const REPORT_CATEGORIES = [
     gradient: 'linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%)',
     shadow: 'rgba(76,175,80,0.25)',
     icon: 'LeafyGreen' as const,
-    sectors: ['ZANJA', 'CAÑADAS', 'CARLETTO', 'PESCADO', 'INVERNADERO EMB', 'PICHANAL TUMA', 'RAIGON'],
+    // Los nombres tienen que ser EXACTOS a los de la base: la tarjeta busca el
+    // sector por nombre. Antes decia "CAÑADAS", "INVERNADERO EMB" y "PICHANAL
+    // TUMA", que no existen, y esos sectores quedaban afuera del informe.
+    sectors: [
+      'ZANJA', 'ZANJA ALDANA', 'ZANJA CHAVEZ', 'ZANJA RUIZ',
+      'CARLETTO', 'CREMER', 'PESCADO',
+      'LAS CAÑADAS ARIEL', 'LAS CAÑADAS DOMINGO', 'Las Cañadas Domingo Tanteros', 'LAS CAÑADAS ESTRUCTURA',
+      'LAS CAÑADAS FLORENCIA', 'Las Cañadas Florencia Tanteros', 'CAÑADAS SALA',
+      'INVERNADERO ALBORNOZ', 'INVERNADERO ANDRES', 'INVERNADERO ILLESCA', 'INVERNADERO MANSILLA',
+      'INVERNADERO MOLINA', 'INVERNADERO PEREZ', 'INVERNADERO REPARACION', 'INVERNADERO RIEGO',
+      'PICHANAL',
+      'RAIGON', 'RAIGON COREANITOS', 'RAIGON EMPAQUE', 'Raigon Cuchuy',
+    ],
   },
   {
     id: 'granos',
@@ -1567,7 +1579,7 @@ const REPORT_CATEGORIES = [
     gradient: 'linear-gradient(135deg, #F9A825 0%, #F57F17 100%)',
     shadow: 'rgba(249,168,37,0.25)',
     icon: 'Banana' as const,
-    sectors: ['SOLAZUTY', 'SOLAZUTY EMP', 'AGUADO', 'AGUADO EMP', 'COLONIA', 'COLONIA EMP', 'SAN AGUSTIN'],
+    sectors: ['SOLAZUTY', 'SOLAZUTY EMPAQUE', 'AGUADO', 'AGUADO EMPAQUE', 'COLONIA', 'COLONIA EMPAQUE', 'SAN AGUSTIN', 'SAN AGUSTIN EMPAQUE'],
   },
   {
     id: 'industrial',
@@ -1576,7 +1588,8 @@ const REPORT_CATEGORIES = [
     gradient: 'linear-gradient(135deg, #26C6DA 0%, #00838F 100%)',
     shadow: 'rgba(38,198,218,0.25)',
     icon: 'Factory' as const,
-    sectors: ['EMPAQUE', 'FABRICA CONSERVAS', 'FABRICA DE VIANDAS', 'PLANTA DE PROCESO', 'PLANTA SILO'],
+    // PAMPA BLANCA va junto a FABRICA (06/10/2026).
+    sectors: ['EMPAQUE', 'FABRICA', 'PAMPA BLANCA', 'FABRICA DE VIANDAS', 'PLANTA DE PROCESO', 'PLANTA SILO'],
   },
   {
     id: 'ganaderia',
@@ -1594,7 +1607,8 @@ const REPORT_CATEGORIES = [
     gradient: 'linear-gradient(135deg, #5C6BC0 0%, #283593 100%)',
     shadow: 'rgba(92,107,192,0.25)',
     icon: 'HardHat' as const,
-    sectors: ['CONSTRUCCION', 'DRONSA', 'FUMIGACION', 'IMPLESA', 'PICADO', 'TALLER', 'TYLSA', 'VIALSA'],
+    sectors: ['CONSTRUCCION', 'DRONSA', 'FUMIGACION', 'IMPLESA', 'MAESTRANZA', 'OFICINA', 'OTITO', 'PICADO Y COSECHA',
+      'SALVITEC', 'SERENOS', 'TALLER', 'TYLSA', 'VIALSA'],
   },
 ];
 
