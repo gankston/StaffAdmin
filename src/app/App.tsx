@@ -3007,6 +3007,15 @@ export default function App() {
       <style dangerouslySetInnerHTML={{ __html: `
         .sa-scroll { scrollbar-width: none; -ms-overflow-style: none; }
         .sa-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
+        /* Electron esconde la barra de titulo de Windows (titleBarStyle: 'hidden'):
+           sin una zona "drag" la ventana no se podia mover, solo minimizar,
+           maximizar o cerrar. El encabezado la arrastra; lo que se toca adentro
+           (botones, buscador, menus) y las ventanas internas abiertas no. En el
+           navegador estas reglas no hacen nada. */
+        .sa-arrastre { -webkit-app-region: drag; }
+        .sa-arrastre button, .sa-arrastre input, .sa-arrastre a, .sa-arrastre select, .sa-arrastre textarea,
+        .sa-arrastre img, .sa-arrastre [role="button"], .sa-arrastre .absolute, .sa-arrastre [style*="cursor: pointer"],
+        .fixed.inset-0, .absolute.inset-0 { -webkit-app-region: no-drag; }
         @keyframes sa-envivo { 0% { box-shadow: 0 0 0 0 rgba(76,175,80,0.6); } 70% { box-shadow: 0 0 0 7px rgba(76,175,80,0); } 100% { box-shadow: 0 0 0 0 rgba(76,175,80,0); } }
         .sa-envivo { animation: sa-envivo 2s ease-out infinite; }
         @media (prefers-reduced-motion: reduce) { .sa-envivo { animation: none; } }
@@ -3027,7 +3036,7 @@ export default function App() {
         }}
       >
         {/* HEADER — fijo, nunca scrollea */}
-        <header className="flex items-center justify-between px-10 py-5 z-30" style={{ flexShrink: 0, background: "#1E1E2E", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+        <header className="sa-arrastre flex items-center justify-between px-10 py-5 z-30" style={{ flexShrink: 0, background: "#1E1E2E", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center rounded-xl overflow-hidden" style={{ width: 42, height: 42, background: "rgba(255,255,255,0.05)" }}>
               <img src="./logo_staffaxis.png" alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
