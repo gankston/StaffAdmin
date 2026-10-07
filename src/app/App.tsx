@@ -266,7 +266,10 @@ function SectorCard({ sector, onClick }: { sector: Sector; onClick: () => void }
         borderRadius: 16,
         padding: 24,
         minHeight: 240,
-        boxShadow: `0 8px 24px ${sent ? 'rgba(76,175,80,0.2)' : 'rgba(255,82,82,0.2)'}`,
+        // Sombra corta y neutra. Antes era un resplandor del color de la tarjeta
+        // (0 8px 24px rojo/verde al 20%): se veia como una "sombra roja" y Chromium
+        // dejaba lineas finas al pintarlo en los bordes de la zona con scroll.
+        boxShadow: "0 4px 12px rgba(0,0,0,0.35)",
       }}
     >
       <div className="flex items-start justify-between mb-5">
@@ -1720,7 +1723,7 @@ function ReportCategoryCard({ category, onClick }: { category: ReportCategory; o
         borderRadius: 16,
         padding: 24,
         minHeight: 180,
-        boxShadow: `0 8px 24px ${category.shadow}`,
+        boxShadow: "0 4px 12px rgba(0,0,0,0.35)", // neutra, igual que las de sectores
       }}
     >
       <div className="flex items-start justify-between mb-4">
