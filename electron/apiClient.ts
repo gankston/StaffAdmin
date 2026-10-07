@@ -425,14 +425,18 @@ export async function fetchAttendances(
             'X-Admin-Token': token,
         };
 
-        const response = await fetch(url, {
-            method: 'GET',
-            headers
-        });
+        // Un corte de red o un 5xx se reintenta una vez: si no, ese sector sale con
+        // 0 tarjas en el Excel o en el PDF de Informes, sin ningun aviso.
+        let response = await fetch(url, { method: 'GET', headers }).catch(() => null);
+        if (!response || response.status >= 500) {
+            console.warn(`[fetchAttendances] ${response ? `HTTP ${response.status}` : 'sin conexión'} para ${sectorId}, reintento en 1,5 s`);
+            await new Promise(r => setTimeout(r, 1500));
+            response = await fetch(url, { method: 'GET', headers });
+        }
 
         if (!response.ok) {
             console.error(`[fetchAttendances] HTTP ${response.status} para ${sectorId}`);
-            return [];
+            throw new Error(`No se pudieron traer las tarjas del sector (error ${response.status} del servidor)`);
         }
 
         const data: any = await response.json();
@@ -524,8 +528,11 @@ export async function fetchAttendances(
         return attendances;
 
     } catch (error) {
+        // Antes devolvia [] y el Excel / PDF salia con el sector en cero sin
+        // ningun aviso. Ahora el error llega a la pantalla, que avisa y no genera.
         console.error(`[fetchAttendances] Error:`, (error as Error).message);
-        return [];   // safe fallback — never crash the export flow
+        const msg = (error as Error).message;
+        throw new Error(msg.startsWith('No se pudieron') ? msg : 'No se pudieron traer las tarjas del sector (¿sin conexión?)');
     }
 }
 

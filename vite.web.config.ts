@@ -11,8 +11,13 @@ import react from '@vitejs/plugin-react'
  */
 const stubNode = path.resolve(__dirname, './src/web/stubs/node.ts')
 
+import pkg from './package.json'
+
 export default defineConfig({
   base: '/admin/',
+  define: {
+    __APP_VERSION__: JSON.stringify(`${pkg.version} (web)`),
+  },
   plugins: [
     react(),
     tailwindcss(),

@@ -67,7 +67,12 @@ function elegirArchivo(accept: string): Promise<string | null> {
 
 // ─── PDF de Informes ──────────────────────────────────────────────────────────
 
+// Mientras el dialogo de impresion esta abierto, otro click no abre otro.
+let imprimiendo = false;
+
 function imprimirHtml(html: string, titulo: string): void {
+    if (imprimiendo) return;
+    imprimiendo = true;
     const iframe = document.createElement('iframe');
     // Sin scripts, como la ventana de Electron (javascript: false): los nombres
     // van sin escapar en el HTML y no tienen que poder ejecutar nada.
@@ -84,6 +89,7 @@ function imprimirHtml(html: string, titulo: string): void {
     const tituloAnterior = document.title;
     document.title = titulo;
     const limpiar = () => {
+        imprimiendo = false;
         document.title = tituloAnterior;
         setTimeout(() => iframe.remove(), 1000);
     };
@@ -239,18 +245,23 @@ const api: ElectronAPI = {
                 headers: { 'x-admin-token': token() },
             });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const tipo = res.headers.get('content-type') ?? '';
             const url = URL.createObjectURL(await res.blob());
             if (pestaña) {
                 pestaña.location.href = url;
             } else {
+                // Sin pestaña (el navegador la bloqueo): se baja, con la extension
+                // correcta para que Windows sepa con que abrirlo.
+                const ext = tipo.includes('pdf') ? '.pdf' : tipo.includes('png') ? '.png' : '.jpg';
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `certificado_${id}`;
+                a.download = `certificado_${id}${ext}`;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
             }
-            setTimeout(() => URL.revokeObjectURL(url), 60_000);
+            // Largo: el visor de PDF de la pestaña lo usa para "Descargar".
+            setTimeout(() => URL.revokeObjectURL(url), 30 * 60_000);
             return { ok: true };
         } catch (error) {
             pestaña?.close();

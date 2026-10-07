@@ -143,7 +143,8 @@ app.whenReady().then(() => {
             return result;
         } catch (error) {
             console.error(`[IPC get-attendances] Failed for ${sectorId}:`, error);
-            return [];
+            // Se propaga: con [] la pantalla generaba el Excel con el sector en cero.
+            throw error;
         }
     });
     ipcMain.handle('export-excel', async (_event, params: ExportParams) => await exportExcel(mainWindow, params));

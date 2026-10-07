@@ -30,6 +30,17 @@ function fmtDate(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
+// Los nombres, DNIs y sectores vienen de lo que cargan los telefonos: escapados,
+// un nombre con <style> o <tr> no puede esconder filas ni el total del informe.
+function esc(v: unknown): string {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function buildHTML(params: PdfReportParams): string {
   const { categoryName, periodMonth, periodYear, rows, totalHours } = params;
   const fromMonth = periodMonth === 1 ? 12 : periodMonth - 1;
@@ -38,19 +49,19 @@ export function buildHTML(params: PdfReportParams): string {
   const today = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
   const totalRow = totalHours != null
-    ? `<tr class="total-row"><td colspan="5"><strong>TOTAL HORAS</strong></td><td class="num">${totalHours}</td></tr>`
+    ? `<tr class="total-row"><td colspan="5"><strong>TOTAL HORAS</strong></td><td class="num">${esc(totalHours)}</td></tr>`
     : '';
 
   const tableRows = rows.length === 0
     ? `<tr><td colspan="6" class="empty">Sin registros para este período</td></tr>${totalRow}`
     : rows.map(r => `
         <tr>
-          <td class="name">${r.employeeName}</td>
-          <td class="dni">${r.dni}</td>
-          <td>${r.sectorName}</td>
-          <td class="loc">${r.recordSectorName}</td>
-          <td class="num">${r.hours}</td>
-          <td class="date">${fmtDate(r.date)}</td>
+          <td class="name">${esc(r.employeeName)}</td>
+          <td class="dni">${esc(r.dni)}</td>
+          <td>${esc(r.sectorName)}</td>
+          <td class="loc">${esc(r.recordSectorName)}</td>
+          <td class="num">${esc(r.hours)}</td>
+          <td class="date">${esc(fmtDate(r.date))}</td>
         </tr>`).join('') + totalRow;
 
   return `<!DOCTYPE html>
@@ -118,7 +129,7 @@ export function buildHTML(params: PdfReportParams): string {
 </head>
 <body>
   <div class="header">
-    <h1>Informe ${categoryName}</h1>
+    <h1>Informe ${esc(categoryName)}</h1>
     <div class="meta">
       <span><strong>Período:</strong> ${periodStr}</span>
       <span><strong>Generado:</strong> ${today}</span>
@@ -139,7 +150,7 @@ export function buildHTML(params: PdfReportParams): string {
     <tbody>${tableRows}</tbody>
   </table>
   <div class="footer">
-    <span>StaffAdmin — Informe ${categoryName}</span>
+    <span>StaffAdmin — Informe ${esc(categoryName)}</span>
     <span>${periodStr}</span>
   </div>
 </body>

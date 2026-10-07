@@ -72,24 +72,33 @@ export async function volverDeGoogle(): Promise<void> {
     if (!/(^|&)(id_token|error)=/.test(hash)) return;
 
     const p = new URLSearchParams(hash);
-    // El id_token no tiene que quedar en la barra de direcciones ni en el historial.
-    history.replaceState(null, '', location.pathname + location.search);
-    const guardado = JSON.parse(sessionStorage.getItem(CLAVE) || 'null');
-    sessionStorage.removeItem(CLAVE);
+    const noVerificado = 'No se pudo verificar el ingreso con Google. Probá de nuevo.';
 
     try {
+        // El id_token no tiene que quedar en la barra de direcciones ni en el historial.
+        history.replaceState(null, '', location.pathname + location.search);
+        let guardado: { state: string; nonce: string } | null = null;
+        try { guardado = JSON.parse(sessionStorage.getItem(CLAVE) || 'null'); } catch { /* queda null */ }
+        sessionStorage.removeItem(CLAVE);
+
+        // Solo vuelve de Google lo que este navegador mando: sin el state propio,
+        // no se muestra nada que venga en la URL (alguien podria armar un link con
+        // un mensaje cualquiera).
+        if (!guardado || p.get('state') !== guardado.state) throw new Error(noVerificado);
         const error = p.get('error');
         if (error) {
-            throw new Error(error === 'access_denied' ? 'Se canceló el ingreso con Google' : `Google respondió: ${error}`);
+            throw new Error(error === 'access_denied' ? 'Se canceló el ingreso con Google' : 'Google no dejó completar el ingreso. Probá de nuevo.');
         }
         const idToken = p.get('id_token');
-        if (!idToken || !guardado || p.get('state') !== guardado.state || payloadDelJwt(idToken).nonce !== guardado.nonce) {
-            throw new Error('No se pudo verificar el ingreso con Google. Probá de nuevo.');
-        }
+        let nonce = '';
+        try { nonce = payloadDelJwt(idToken ?? '').nonce; } catch { /* token mal formado */ }
+        if (!idToken || nonce !== guardado.nonce) throw new Error(noVerificado);
         const res = await fetch(`${API_BASE}/api/admin/google-auth`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id_token: idToken }),
+            // Si el server no responde, la app igual arranca (a la pantalla de ingreso).
+            signal: AbortSignal.timeout(15_000),
         });
         const data: any = await res.json().catch(() => ({}));
         if (!data.token) throw new Error(data.error || 'Error al autenticar con Google');
@@ -97,7 +106,9 @@ export async function volverDeGoogle(): Promise<void> {
         localStorage.setItem('admin_token', data.token);
         localStorage.setItem('admin_user', JSON.stringify(data.user));
     } catch (err) {
-        const texto = (err as Error).message || 'Error al autenticar con Google';
+        const texto = (err as Error).name === 'TimeoutError'
+            ? 'El servidor tardó demasiado en responder. Probá de nuevo.'
+            : (err as Error).message || 'Error al autenticar con Google';
         // La app arranca despues de esto: el aviso se agrega cuando ya hay body.
         setTimeout(() => mostrarAviso(texto), 0);
     }

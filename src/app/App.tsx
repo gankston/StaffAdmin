@@ -53,6 +53,12 @@ import {
 } from "lucide-react";
 import { DialogoCertificado, traerCertificados, type CertificadoMedico } from "./DialogoCertificado";
 import { GLOSARIO_CM, horasDeCertificado } from "../../electron/certificadoMedico";
+import { todayInAppTz } from "../../electron/datetime";
+
+// El mensaje de un error que viene de Electron llega envuelto en "Error invoking
+// remote method 'x': Error: ...": se muestra solo lo que importa.
+const mensajeError = (err: any) =>
+  String(err?.message ?? err ?? '').replace(/^Error invoking remote method '[^']+': /, '').replace(/^Error: /, '') || 'error desconocido';
 
 
 type CardState = "sent" | "missing";
@@ -91,10 +97,15 @@ function SectorDropdown({ value, onChange, sectors }: { value: string; onChange:
   const [dropPos, setDropPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // El menu va en un portal (fuera de `ref`): sin mirarlo a el tambien, el
+    // mousedown sobre una opcion lo cerraba antes del click y no se elegia nada.
     const fn = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (ref.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", fn);
     return () => document.removeEventListener("mousedown", fn);
@@ -112,6 +123,7 @@ function SectorDropdown({ value, onChange, sectors }: { value: string; onChange:
 
   const dropdown = open && dropPos ? (
     <div
+      ref={menuRef}
       style={{
         position: "fixed",
         top: dropPos.top,
@@ -406,8 +418,9 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     setViewFotoLoading(false);
   };
 
-  // Fecha de hoy en formato YYYY-MM-DD
-  const todayStr = new Date().toISOString().slice(0, 10);
+  // Fecha de hoy en formato YYYY-MM-DD, en hora argentina (con toISOString era
+  // la de Greenwich: de 21 a 24 h preguntaba por los ausentes de mañana).
+  const todayStr = todayInAppTz();
 
   // ── Period state: default = current month/year (Threshold: 21st) ──────────
   const nowForPeriod = new Date();
@@ -756,13 +769,16 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
         if (adminToken) headers['X-Admin-Token'] = adminToken;
         const absUrl = `https://staffaxis-new-version-production.up.railway.app/api/admin/absences?sector_id=${encodeURIComponent(sector.apiId)}&start_date=${startDate}&end_date=${endDate}`;
         const absRes = await fetch(absUrl, { headers });
-        if (absRes.ok) {
-          const absData = await absRes.json();
-          absences = absData.absences ?? [];
-          console.log(`[Export] Ausencias del período: ${absences.length}`);
-        }
+        if (!absRes.ok) throw new Error(`HTTP ${absRes.status}`);
+        const absData = await absRes.json();
+        absences = absData.absences ?? [];
+        console.log(`[Export] Ausencias del período: ${absences.length}`);
       } catch (absErr) {
-        console.warn('[Export] No se pudieron cargar ausencias:', absErr);
+        // Igual que con los certificados: un Excel sin las ausencias sale mal y
+        // nadie se da cuenta.
+        console.error('[Export] No se pudieron cargar ausencias:', absErr);
+        alert('No se pudieron traer las ausencias del período. Probá de nuevo en un momento.');
+        return;
       }
 
       // 3b. Fetch traslados del período
@@ -772,13 +788,14 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
         if (adminToken) headers['X-Admin-Token'] = adminToken;
         const trUrl = `https://staffaxis-new-version-production.up.railway.app/api/admin/transfers?sector_id=${encodeURIComponent(sector.apiId)}&start_date=${startDate}&end_date=${endDate}`;
         const trRes = await fetch(trUrl, { headers });
-        if (trRes.ok) {
-          const trData = await trRes.json();
-          transfers = trData.transfers ?? [];
-          console.log(`[Export] Traslados del período: ${transfers.length}`);
-        }
+        if (!trRes.ok) throw new Error(`HTTP ${trRes.status}`);
+        const trData = await trRes.json();
+        transfers = trData.transfers ?? [];
+        console.log(`[Export] Traslados del período: ${transfers.length}`);
       } catch (trErr) {
-        console.warn('[Export] No se pudieron cargar traslados:', trErr);
+        console.error('[Export] No se pudieron cargar traslados:', trErr);
+        alert('No se pudieron traer los traslados del período. Probá de nuevo en un momento.');
+        return;
       }
 
       // 3c. Certificados médicos del período. Si no se pueden traer NO se exporta:
@@ -828,7 +845,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
         document.body.appendChild(link);
         link.click();
         link.remove();
-        window.URL.revokeObjectURL(url);
+        setTimeout(() => window.URL.revokeObjectURL(url), 1000);
 
         onExport();
         console.log('[Export] Archivo descargado visualmente:', result.fileName);
@@ -844,7 +861,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
       }
     } catch (err: any) {
       console.error('[Export] IPC error:', err);
-      alert(`No se pudo generar el Excel: ${err?.message || 'error de conexión'}`);
+      alert(`No se pudo generar el Excel: ${mensajeError(err)}`);
     } finally {
       setExporting(false);
     }
@@ -856,6 +873,9 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
   const handleShowLocation = async () => {
     if (locatingTarja || !window.electronAPI?.getAttendances) return;
     setLocatingTarja(true);
+    // La pestaña se abre ya, con el click todavia vigente: abierta despues del
+    // await, el navegador (version web) la bloquea como ventana emergente.
+    const pestaña = window.open("", "_blank");
     try {
       const { startDate, endDate } = computePeriodRange(periodMonth, periodYear);
       const adminToken = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
@@ -865,12 +885,16 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
         .sort((a, b) => new Date(b.submitted_at ?? b.date).getTime() - new Date(a.submitted_at ?? a.date).getTime());
 
       if (conUbicacion.length === 0) {
+        pestaña?.close();
         alert("Ninguna tarja de este período trajo ubicación (o son de una versión de la app anterior al GPS).");
         return;
       }
       const ultima = conUbicacion[0];
-      window.open(`https://www.google.com/maps?q=${ultima.latitude},${ultima.longitude}`, "_blank");
+      const mapa = `https://www.google.com/maps?q=${ultima.latitude},${ultima.longitude}`;
+      if (pestaña) pestaña.location.href = mapa;
+      else window.open(mapa, "_blank");
     } catch (err) {
+      pestaña?.close();
       console.error('[Ubicacion] Error:', err);
       alert("Error de conexión al buscar la ubicación.");
     } finally {
@@ -1632,7 +1656,7 @@ function ReportCategoryCard({ category, onClick }: { category: ReportCategory; o
           {getIcon(category.icon)}
         </div>
         <div className="px-3 py-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.2)" }}>
-          <span className="text-white font-bold" style={{ fontSize: 12 }}>{category.sectors.length} sectores</span>
+          <span className="text-white font-bold" style={{ fontSize: 12 }}>{category.sectors.length} {category.sectors.length === 1 ? "sector" : "sectores"}</span>
         </div>
       </div>
       <div className="flex-1" />
@@ -2035,7 +2059,15 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
       const allRows: { employeeName: string; dni: string; sectorName: string; recordSectorName: string; hours: number | string; date: string }[] = [];
       let totalHours = 0;
 
-      await Promise.all(category.sectors.map(async (sectorName) => {
+      // De a 5 sectores a la vez, como fetchSectors: Hortalizas tiene 27 y todas
+      // juntas saturan el server (y una consulta que falla deja un sector vacio).
+      const conLimite = async <T,>(items: T[], n: number, fn: (x: T) => Promise<void>) => {
+        let i = 0;
+        await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+          while (i < items.length) await fn(items[i++]);
+        }));
+      };
+      await conLimite(category.sectors, 5, async (sectorName) => {
         const norm = (s: string) => s.toUpperCase().trim();
         const apiSector = apiSectors.find(s => norm(s.name) === norm(sectorName));
         if (!apiSector) return;
@@ -2067,7 +2099,7 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
 
           allRows.push({ employeeName: name, dni, sectorName: assignedSector, recordSectorName: recordSector, hours: valForPdf, date: att.date || '' });
         }
-      }));
+      });
 
       // Sort by employee name, then date (most recent first per employee)
       allRows.sort((a, b) => {
@@ -2086,12 +2118,13 @@ function PanelInformes({ apiSectors }: { apiSectors: Sector[] }) {
         const a = document.createElement('a');
         a.href = url; a.download = result.fileName || 'informe.pdf';
         document.body.appendChild(a); a.click(); a.remove();
-        URL.revokeObjectURL(url);
-      } else {
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } else if (!result.success) {
         console.error('[PDF]', result.error);
       }
     } catch (err) {
       console.error('[PDF] error:', err);
+      alert(`No se pudo generar el informe: ${mensajeError(err)}`);
     } finally {
       setPdfLoading(false);
     }
@@ -3069,7 +3102,7 @@ export default function App() {
                         <UserCog size={14} /> Gestionar Usuarios
                       </button>
                       <button
-                        onClick={() => { setShowSettingsMenu(false); alert("StaffAdmin - Panel de Control\nVersión: 1.0.9"); }}
+                        onClick={() => { setShowSettingsMenu(false); alert(`StaffAdmin - Panel de Control\nVersión: ${__APP_VERSION__}`); }}
                         className="w-full text-left px-5 py-3 text-white transition-colors hover:bg-white/10 flex items-center gap-2"
                         style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none" }}
                       >
