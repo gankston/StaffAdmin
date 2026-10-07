@@ -60,6 +60,12 @@ function elegirArchivo(accept: string): Promise<string | null> {
             terminar(clave);
         });
         input.addEventListener('cancel', () => terminar(null));
+        // Navegadores sin evento 'cancel' (Chrome < 113, Safari < 16.4): al cerrar
+        // el dialogo la ventana recupera el foco; si en 1,5 s no llego ningun
+        // archivo, se toma como cancelado (si no, la promesa quedaba colgada).
+        window.addEventListener('focus', () => {
+            setTimeout(() => { if (!input.files?.length) terminar(null); }, 1500);
+        }, { once: true });
         document.body.appendChild(input);
         input.click();
     });
@@ -83,8 +89,17 @@ function imprimirHtml(html: string, titulo: string): void {
     doc.open();
     // A4 vertical con fondos, como el printToPDF de Electron. El titulo es el
     // nombre que propone Chrome al guardar el PDF.
+    // Hoja sin margen: asi Chrome no tiene donde poner su encabezado y pie (fecha,
+    // titulo y direccion de la pagina). El margen de 1 cm que pone Electron va en
+    // el body y se repite en cada hoja (box-decoration-break: clone); los 32 px de
+    // arriba y abajo del informe pasan al html para que esten una sola vez.
+    // Probado con Edge: mismas hojas y mismas filas por hoja que con margenes.
     doc.write(html.replace('</head>',
-        `<title>${titulo}</title><style>@page{size:A4 portrait}html{-webkit-print-color-adjust:exact;print-color-adjust:exact}</style></head>`));
+        `<title>${titulo}</title><style>` +
+        '@page{size:A4 portrait;margin:0}' +
+        'html{padding:32px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
+        'body{padding:10mm calc(40px + 10mm)!important;-webkit-box-decoration-break:clone;box-decoration-break:clone}' +
+        '</style></head>'));
     doc.close();
     const tituloAnterior = document.title;
     document.title = titulo;

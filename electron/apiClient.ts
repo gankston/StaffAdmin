@@ -17,6 +17,7 @@ export interface ApiSector {
     name: string;
     encargado?: string | null;   // real field from API (e.g. "SERGIO GODOY")
     employee_count?: number | null; // count de empleados activos — viene del JOIN en /api/sectors
+    archivado?: boolean;
 }
 
 export interface SectorApiResponse {
@@ -35,6 +36,8 @@ export interface UiSector {
     encargado: string;
     trend: number;
     employeesList?: ApiEmployee[];
+    /** Archivado: no se muestra en el panel (solo en "Ver archivados"). */
+    archivado?: boolean;
     /**
      * Attendances de HOY para este sector. fetchSectors ya las baja para
      * decidir el estado sent/missing — se exponen acá para que App.tsx
@@ -146,6 +149,7 @@ export function toUiSector(api: ApiSector, index: number): UiSector {
         icon: resolveIcon(api.name),
         encargado: api.encargado ?? 'Sin asignar',   // real value from API
         trend: 0,
+        archivado: api.archivado === true,
     };
 }
 
@@ -184,7 +188,9 @@ async function fetchSectorsOnce(attempt: number): Promise<Response> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12_000);
     try {
-        const res = await fetch(`${API_BASE}/api/sectors`, {
+        // Con los archivados: el panel los muestra aparte e Informes los necesita
+        // para la historia. Los telefonos piden /api/sectors sin esto y no los ven.
+        const res = await fetch(`${API_BASE}/api/sectors?incluir_archivados=1`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -245,6 +251,7 @@ export async function fetchSectors(adminToken = ''): Promise<UiSector[]> {
                     name: sector.name,
                     encargado: sector.encargado ?? null,
                     employee_count: typeof sector.employee_count === 'number' ? sector.employee_count : null,
+                    archivado: sector.archivado === true,
                 },
                 index
             ));

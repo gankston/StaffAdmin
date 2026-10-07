@@ -24,6 +24,8 @@ import {
   BarChart2,
   RefreshCw,
   Trash2,
+  Archive,
+  ArchiveRestore,
   UserCog,
   Download,
   Plus,
@@ -72,6 +74,7 @@ interface Sector {
   icon: string;
   encargado: string;
   trend: number;
+  archivado?: boolean;
 }
 
 const getIcon = (iconName: string, size = 24) => {
@@ -251,8 +254,8 @@ function StatsCard({ filter, sectors, globalStats }: { filter: string, sectors: 
 
 function SectorCard({ sector, onClick }: { sector: Sector; onClick: () => void }) {
   const sent = sector.state === "sent";
-  const bg = sent ? "#4CAF50" : "#FF5252";
-  const badgeText = sent ? "Enviado" : "Faltante";
+  const bg = sector.archivado ? "#4A4A5E" : sent ? "#4CAF50" : "#FF5252";
+  const badgeText = sector.archivado ? "Archivado" : sent ? "Enviado" : "Faltante";
 
   return (
     <div
@@ -303,7 +306,7 @@ interface Employee {
 }
 
 
-function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, onDeleteEmployee, onDeleteSector, setShowConfirmDelete }: { sector: Sector; onClose: () => void; onExport: () => void; isAdmin: boolean; onCreateEmployee?: () => void; onDeleteEmployee?: (id: string) => Promise<boolean>; onDeleteSector?: (id: string) => Promise<boolean>; setShowConfirmDelete: (val: any) => void }) {
+function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, onDeleteEmployee, onDeleteSector, onArchiveSector, setShowConfirmDelete, recarga = 0 }: { recarga?: number; onArchiveSector?: (id: string, archivar: boolean) => Promise<boolean>; sector: Sector; onClose: () => void; onExport: () => void; isAdmin: boolean; onCreateEmployee?: () => void; onDeleteEmployee?: (id: string) => Promise<boolean>; onDeleteSector?: (id: string) => Promise<boolean>; setShowConfirmDelete: (val: any) => void }) {
   const [showTooltip, setShowTooltip] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [empLoading, setEmpLoading] = useState(true);
@@ -357,7 +360,8 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
       });
       if (res.ok) {
         setEmployees(prev => prev.map(e =>
-          e.id === editDialogEmp.id ? { ...e, first_name: editFirst.trim(), last_name: editLast.trim(), dni: editDni.trim() || null } : e
+          // El server lo guarda solo con digitos ("40 123 988" -> "40123988"): se muestra igual.
+          e.id === editDialogEmp.id ? { ...e, first_name: editFirst.trim(), last_name: editLast.trim(), dni: editDni.replace(/\D/g, '') || null } : e
         ));
         setEditDialogEmp(null);
       } else {
@@ -395,6 +399,7 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
 
   const handleEliminarFoto = async (lado: 'frente' | 'dorso') => {
     if (!editDialogEmp) return;
+    if (!window.confirm(`¿Borrar la foto del DNI (${lado}) de ${editDialogEmp.last_name} ${editDialogEmp.first_name}?`)) return;
     const res = await window.electronAPI?.deleteFoto?.(editDialogEmp.id, lado);
     if (res?.success) {
       setFotoData(prev => ({ ...prev, [lado]: null }));
@@ -949,6 +954,24 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
     fetchAbsences();
   }, [sector.apiId, todayStr]);
 
+  // Tiempo real: cuando el panel detecta un cambio, el sector abierto recarga en
+  // silencio empleados, tarjas del periodo y certificados, sin vaciar la lista.
+  const primeraRecarga = useRef(true);
+  useEffect(() => {
+    if (primeraRecarga.current) { primeraRecarga.current = false; return; }
+    const rawTok = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+    const tok = rawTok === "undefined" ? "" : rawTok;
+    window.electronAPI?.getEmployees?.(sector.apiId, tok)
+      // [] tambien es lo que devuelve un error de red: no se vacia una lista que tenia gente.
+      .then((d: any) => { if (Array.isArray(d)) setEmployees((prev) => (d.length || !prev.length ? d : prev)); })
+      .catch(() => {});
+    const { startDate, endDate } = computePeriodRange(periodMonth, periodYear);
+    window.electronAPI?.getAttendances?.(sector.apiId, startDate, endDate, tok)
+      .then((d: any) => setPreviewAttendances(d ?? []))
+      .catch(() => {});
+    setRecargaCerts((n) => n + 1);
+  }, [recarga]);
+
   return (
     <>
     <div
@@ -981,19 +1004,60 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {isAdmin && onDeleteSector && (
+            {isAdmin && sector.archivado && onArchiveSector && (
               <button
-                onClick={() => {
+                onClick={async () => { if (await onArchiveSector(sector.apiId, false)) onClose(); }}
+                className="flex items-center gap-2 px-3 rounded-xl transition-all hover:bg-white/10 active:scale-95"
+                style={{ height: 36, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", cursor: "pointer" }}
+                title="Volver a mostrar el sector en el panel y en los teléfonos"
+              >
+                <ArchiveRestore size={15} color="#fff" />
+                <span className="text-white" style={{ fontSize: 12, fontWeight: 600 }}>Desarchivar</span>
+              </button>
+            )}
+            {isAdmin && !sector.archivado && onDeleteSector && (
+              <button
+                onClick={async () => {
+                  // Antes de ofrecer nada se pregunta que tiene: vacio se borra; con
+                  // historia (tarjas = sueldos) solo se archiva.
+                  const rawTok = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+                  let uso: any;
+                  try {
+                    const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin/sectors/${sector.apiId}/uso`, {
+                      headers: { "X-Admin-Token": rawTok === "undefined" ? "" : rawTok },
+                    });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    uso = await res.json();
+                  } catch {
+                    alert("No se pudo consultar el sector. Probá de nuevo.");
+                    return;
+                  }
+                  const n = (c: number, uno: string, varios: string) => `${c} ${c === 1 ? uno : varios}`;
+                  const partes = [
+                    uso.empleados ? n(uso.empleados, "empleado", "empleados") : "",
+                    uso.tarjas ? n(uso.tarjas, "tarja cargada", "tarjas cargadas") : "",
+                    uso.telefonos ? n(uso.telefonos, "teléfono autorizado", "teléfonos autorizados") : "",
+                    uso.traslados ? n(uso.traslados, "traslado", "traslados") : "",
+                  ].filter(Boolean);
+                  if (!partes.length) {
+                    setShowConfirmDelete({
+                      type: 'sector', id: sector.apiId, name: sector.name,
+                      onConfirm: async () => {
+                        if (onDeleteSector && await onDeleteSector(sector.apiId)) onClose();
+                      },
+                    });
+                    return;
+                  }
                   setShowConfirmDelete({
-                    type: 'sector',
-                    id: sector.apiId,
-                    name: sector.name,
+                    type: 'sector', id: sector.apiId, name: sector.name,
+                    titulo: "Archivar sector",
+                    boton: "Archivar",
+                    mensaje: `${sector.name} tiene ${partes.join(", ")}, así que no se puede eliminar sin perder el historial de sueldos. ` +
+                      "Si lo archivás deja de verse en el panel y en los teléfonos, pero no se borra nada: " +
+                      "sigue en \"Ver sectores archivados\" y se puede desarchivar.",
                     onConfirm: async () => {
-                      if (onDeleteSector) {
-                        const ok = await onDeleteSector(sector.apiId);
-                        if (ok) onClose();
-                      }
-                    }
+                      if (onArchiveSector && await onArchiveSector(sector.apiId, true)) onClose();
+                    },
                   });
                 }}
                 className="flex items-center justify-center rounded-xl transition-all hover:bg-red-500/20 active:scale-95"
@@ -1287,6 +1351,14 @@ function FloatingModal({ sector, onClose, onExport, isAdmin, onCreateEmployee, o
                         </tr>
                       );
                     })}
+                  {/* Busqueda sin resultados: antes la tabla quedaba vacia sin decir nada. */}
+                  {localSearch.trim() && !employees.some(emp => emp.is_active && `${emp.first_name || ''} ${emp.last_name || ''} ${emp.dni || ''}`.toLowerCase().includes(localSearch.toLowerCase())) && (
+                    <tr>
+                      <td colSpan={999} style={{ padding: "20px 16px", color: "rgba(255,255,255,0.5)", fontSize: 13 }}>
+                        No hay empleados que coincidan con «{localSearch.trim()}».
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2399,10 +2471,6 @@ export default function App() {
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
 
   // New States for Creation Modals
-  const [showCreateAdminModal, setShowCreateAdminModal] = useState(false);
-  const [newAdminUser, setNewAdminUser] = useState("");
-  const [newAdminPass, setNewAdminPass] = useState("");
-
   const [showCreateSectorModal, setShowCreateSectorModal] = useState(false);
   const [newSectorName, setNewSectorName] = useState("");
   const [newSectorEncargado, setNewSectorEncargado] = useState("");
@@ -2415,22 +2483,8 @@ export default function App() {
   const [creationLoading, setCreationLoading] = useState(false);
   const [creationError, setCreationError] = useState("");
 
-  const [showAdminManagement, setShowAdminManagement] = useState(false);
-  const [adminUsers, setAdminUsers] = useState<any[]>([]);
-  const [loadingAdmins, setLoadingAdmins] = useState(false);
-  const [editingAdmin, setEditingAdmin] = useState<any | null>(null);
-  const [editAdminUser, setEditAdminUser] = useState("");
-  const [editAdminPass, setEditAdminPass] = useState("");
+  const [showConfirmDelete, setShowConfirmDelete] = useState<{ type: 'employee' | 'sector', id: string, name: string, sectorId?: string, onConfirm?: () => Promise<void>, titulo?: string, mensaje?: string, boton?: string } | null>(null);
 
-  const [showConfirmDelete, setShowConfirmDelete] = useState<{ type: 'employee' | 'sector' | 'admin', id: string, name: string, sectorId?: string, onConfirm?: () => Promise<void> } | null>(null);
-
-  const getAdminUsername = () => {
-    try {
-      const u = localStorage.getItem("admin_user") || sessionStorage.getItem("admin_user");
-      if (u) return JSON.parse(u).username;
-    } catch { }
-    return null;
-  };
   const isAdmin = isLoggedIn;
 
   useEffect(() => {
@@ -2658,7 +2712,7 @@ export default function App() {
               const n = parseFloat(s);
               return isNaN(n) ? 0 : n;
           };
-          const results = await Promise.all(sectors.map(async (sec) => {
+          const results = await Promise.all(sectors.filter((s) => !s.archivado).map(async (sec) => {
               let sH = 0, sC = 0, sI = 0, sCj = 0, sCn = 0;
               let sFum = 0, sSiembra = 0, sBols = 0, sEtiq = 0, sCamion = 0, sEstiba = 0;
               let sCC = 0, sCI = 0, sCB = 0, sTI = 0, sTC = 0, sDesc = 0, sCarga = 0;
@@ -2759,6 +2813,43 @@ export default function App() {
     loadSectors(); 
   }, []);
 
+  // ── Tiempo real (reemplaza al boton "Actualizar") ───────────────────────────
+  // Cada 15 s se pregunta al server si cambio algo de lo que muestra el panel
+  // (tarjas de hoy, empleados, sectores, ausencias, certificados, solicitudes).
+  // Es una consulta chiquita; solo si cambio se recargan sectores y estadisticas,
+  // y `recarga` le avisa al sector abierto que se refresque en silencio. Con la
+  // ventana minimizada no se pregunta; al volver, se revisa en el momento.
+  const [recarga, setRecarga] = useState(0);
+  const [verArchivados, setVerArchivados] = useState(false);
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    let firma: string | null = null;
+    // Si se salteo alguna revision (ventana minimizada, sin red) antes de tener
+    // la primera firma, lo que se cargo al abrir puede estar viejo: se recarga.
+    let salteada = false;
+    let cancelado = false;
+    const revisar = async () => {
+      if (document.visibilityState !== 'visible') { salteada = true; return; }
+      try {
+        const res = await fetch('https://staffaxis-new-version-production.up.railway.app/api/admin/cambios', { headers: getHeaders(), cache: 'no-store' });
+        if (!res.ok || cancelado) { salteada = true; return; }
+        const { firma: nueva } = await res.json();
+        if (cancelado) return;
+        if ((firma !== null && nueva !== firma) || (firma === null && salteada)) {
+          loadSectors(false);
+          setRecarga((n) => n + 1);
+        }
+        firma = nueva;
+        salteada = false;
+      } catch { salteada = true; /* sin red: se reintenta en la proxima vuelta */ }
+    };
+    revisar();
+    const intervalo = setInterval(revisar, 15000);
+    const alVolver = () => { if (document.visibilityState === 'visible') revisar(); };
+    document.addEventListener('visibilitychange', alVolver);
+    return () => { cancelado = true; clearInterval(intervalo); document.removeEventListener('visibilitychange', alVolver); };
+  }, [isLoggedIn]);
+
   useEffect(() => {
     if (sectors && sectors.length > 0) {
        fetchGlobalStats();
@@ -2787,27 +2878,6 @@ export default function App() {
     const interval = setInterval(fetchPendingCount, 30000);
     return () => clearInterval(interval);
   }, [isLoggedIn]);
-
-  const handleCreateAdmin = async () => {
-    if (!newAdminUser || !newAdminPass) return setCreationError("Completá todos los campos");
-    setCreationLoading(true); setCreationError("");
-    
-    const headers = getHeaders();
-    console.log("Enviando headers para Crear Admin:", headers);
-
-    try {
-      const res = await fetch("https://staffaxis-new-version-production.up.railway.app/api/admin-users", {
-        method: "POST", headers,
-        body: JSON.stringify({ username: newAdminUser, password: newAdminPass })
-      });
-      if (res.ok) {
-        setShowCreateAdminModal(false); setNewAdminUser(""); setNewAdminPass("");
-      } else {
-        const d = await res.json(); setCreationError(d.error || "Error al crear empleado");
-      }
-    } catch (e) { setCreationError("Error de conexión"); }
-    setCreationLoading(false);
-  };
 
   const handleCreateSector = async () => {
     if (!newSectorName || !newSectorEncargado) return setCreationError("Completá todos los campos");
@@ -2890,62 +2960,6 @@ export default function App() {
     }
   };
 
-  const handleFetchAdmins = async () => {
-    setLoadingAdmins(true);
-    try {
-      const res = await fetch("https://staffaxis-new-version-production.up.railway.app/api/admin-users", {
-        headers: getHeaders()
-      });
-      if (res.ok) {
-        const d = await res.json();
-        setAdminUsers(d.users || []);
-      }
-    } catch (e) { console.error(e); }
-    setLoadingAdmins(false);
-  };
-
-  const handleUpdateAdmin = async () => {
-    if (!editingAdmin || !editAdminUser) return;
-    setLoadingAdmins(true);
-    try {
-      const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin-users/${editingAdmin.id}`, {
-        method: "PUT",
-        headers: getHeaders(),
-        body: JSON.stringify({ username: editAdminUser, password: editAdminPass })
-      });
-      if (res.ok) {
-        setEditingAdmin(null); setEditAdminUser(""); setEditAdminPass("");
-        handleFetchAdmins();
-      } else {
-        const d = await res.json(); alert(d.error || "Error al actualizar");
-      }
-    } catch (e) { alert("Error de conexión"); }
-    setLoadingAdmins(false);
-  };
-
-  const handleDeleteAdmin = async (id: string) => {
-    // Handled by custom confirm modal
-    setLoadingAdmins(true);
-    try {
-      const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin-users/${id}`, {
-        method: "DELETE",
-        headers: getHeaders()
-      });
-      if (res.ok) {
-        handleFetchAdmins();
-        setLoadingAdmins(false);
-        return true;
-      } else {
-        const d = await res.json(); alert(d.error || "Error al eliminar");
-      }
-    } catch (e) { alert("Error de conexión"); }
-    setLoadingAdmins(false);
-    return false;
-  };
-
-  useEffect(() => {
-    if (showAdminManagement) handleFetchAdmins();
-  }, [showAdminManagement]);
 
   // Auto-close toast launched effect
   useEffect(() => {
@@ -2957,14 +2971,35 @@ export default function App() {
     }
   }, [showSuccessToast]);
 
+  const handleArchiveSector = async (id: string, archivar: boolean) => {
+    try {
+      const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin/sectors/${id}/${archivar ? 'archivar' : 'desarchivar'}`, {
+        method: "POST", headers: getHeaders(), body: "{}",
+      });
+      if (res.ok) {
+        loadSectors(false);
+        return true;
+      }
+      const d = await res.json().catch(() => ({}));
+      alert(d.error || `No se pudo ${archivar ? 'archivar' : 'desarchivar'} el sector`);
+      return false;
+    } catch (e) {
+      alert("Error de conexión");
+      return false;
+    }
+  };
+
   const handleExportSuccess = () => {
-    // Step 3 logic: close modals and show toast
-    setSelectedSector(null);
+    // Muestra el aviso de exito; el sector queda abierto (antes se cerraba).
     setShowExportModal(false);
     setShowSuccessToast(true);
   };
 
-  const hasMissing = sectors.some((s) => s.state === "missing");
+  // Los archivados no van al panel, al selector ni a las estadisticas; se ven
+  // aparte con "Ver archivados". Informes usa la lista completa (historia).
+  const sectoresActivos = sectors.filter((s) => !s.archivado);
+  const sectoresArchivados = sectors.filter((s) => s.archivado);
+  const hasMissing = sectoresActivos.some((s) => s.state === "missing");
 
   return (
     <div className="relative h-screen w-full overflow-hidden" style={{ background: "#1E1E2E", fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -2972,6 +3007,9 @@ export default function App() {
       <style dangerouslySetInnerHTML={{ __html: `
         .sa-scroll { scrollbar-width: none; -ms-overflow-style: none; }
         .sa-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
+        @keyframes sa-envivo { 0% { box-shadow: 0 0 0 0 rgba(76,175,80,0.6); } 70% { box-shadow: 0 0 0 7px rgba(76,175,80,0); } 100% { box-shadow: 0 0 0 0 rgba(76,175,80,0); } }
+        .sa-envivo { animation: sa-envivo 2s ease-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .sa-envivo { animation: none; } }
         .sa-table-scroll { scrollbar-width: thin; scrollbar-color: rgba(156,39,176,0.4) transparent; }
         .sa-table-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
         .sa-table-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -3095,13 +3133,6 @@ export default function App() {
                         Crear Nuevo Sector
                       </button>
                       <button
-                        onClick={() => { setShowSettingsMenu(false); setShowAdminManagement(true); }}
-                        className="w-full text-left px-5 py-3 text-white transition-colors hover:bg-white/10 flex items-center gap-2"
-                        style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none" }}
-                      >
-                        <UserCog size={14} /> Gestionar Usuarios
-                      </button>
-                      <button
                         onClick={() => { setShowSettingsMenu(false); alert(`StaffAdmin - Panel de Control\nVersión: ${__APP_VERSION__}`); }}
                         className="w-full text-left px-5 py-3 text-white transition-colors hover:bg-white/10 flex items-center gap-2"
                         style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none" }}
@@ -3136,8 +3167,8 @@ export default function App() {
 
           {/* LEFT COLUMN (SIDEBAR) — fija, con scroll propio si no entra */}
           <div className="sa-scroll flex flex-col gap-6 pb-8" style={{ width: 320, flexShrink: 0, overflowY: "auto", minHeight: 0 }}>
-            <SectorDropdown value={filter} onChange={setFilter} sectors={sectors} />
-            <StatsCard filter={filter} sectors={sectors} globalStats={globalStats} />
+            <SectorDropdown value={filter} onChange={setFilter} sectors={sectoresActivos} />
+            <StatsCard filter={filter} sectors={sectoresActivos} globalStats={globalStats} />
             <div className="flex flex-col gap-3 mt-1 px-2">
               <div className="flex items-center gap-3">
                 <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#4CAF50', boxShadow: '0 0 8px rgba(76,175,80,0.4)' }} />
@@ -3208,16 +3239,14 @@ export default function App() {
               {/* Refresh — only visible on Sectores panel */}
               {activePanel === 'sectores' && (
                 <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => loadSectors(true)}
-                    disabled={isLoading}
-                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl transition-all hover:bg-white/10 active:scale-95"
-                    style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)", cursor: isLoading ? "not-allowed" : "pointer", opacity: isLoading ? 0.5 : 1 }}
-                    title="Actualizar desde la API"
+                  <div
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl"
+                    style={{ background: "#2A2A3E", border: "1px solid rgba(255,255,255,0.1)" }}
+                    title="El panel se actualiza solo cuando llegan tarjas o cambios"
                   >
-                    <RefreshCw size={14} color="rgba(255,255,255,0.7)" style={{ animation: isLoading ? "spin 0.8s linear infinite" : "none" }} />
-                    <span className="text-white/70" style={{ fontSize: 12, fontWeight: 600 }}>Actualizar</span>
-                  </button>
+                    <span className="sa-envivo" style={{ width: 8, height: 8, borderRadius: 999, background: "#4CAF50", boxShadow: "0 0 0 0 rgba(76,175,80,0.6)" }} />
+                    <span className="text-white/70" style={{ fontSize: 12, fontWeight: 600 }}>En vivo</span>
+                  </div>
                 </div>
               )}
             </div>
@@ -3266,11 +3295,34 @@ export default function App() {
                 </button>
               </div>
             ) : (
+              <>
               <div className="grid grid-cols-3 gap-6">
-                {sectors.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()) || (s.encargado && s.encargado.toLowerCase().includes(searchQuery.toLowerCase()))).map((s) => (
+                {sectoresActivos.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()) || (s.encargado && s.encargado.toLowerCase().includes(searchQuery.toLowerCase()))).map((s) => (
                   <SectorCard key={s.id} sector={s} onClick={() => setSelectedSector(s)} />
                 ))}
               </div>
+              {sectoresArchivados.length > 0 && (
+                <div className="mt-8">
+                  <button
+                    onClick={() => setVerArchivados((v) => !v)}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl transition-all hover:bg-white/10"
+                    style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer" }}
+                  >
+                    <Archive size={14} color="rgba(255,255,255,0.6)" />
+                    <span className="text-white/60" style={{ fontSize: 12, fontWeight: 600 }}>
+                      {verArchivados ? "Ocultar" : "Ver"} sectores archivados ({sectoresArchivados.length})
+                    </span>
+                  </button>
+                  {verArchivados && (
+                    <div className="grid grid-cols-3 gap-6 mt-4">
+                      {sectoresArchivados.map((s) => (
+                        <SectorCard key={s.id} sector={s} onClick={() => setSelectedSector(s)} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              </>
             )}
             </div>
           </div>
@@ -3299,7 +3351,9 @@ export default function App() {
               }}
               onDeleteEmployee={handleDeleteEmployee}
               onDeleteSector={handleDeleteSector}
+              onArchiveSector={handleArchiveSector}
               setShowConfirmDelete={setShowConfirmDelete}
+              recarga={recarga}
             />
           </div>
         )
@@ -3436,23 +3490,6 @@ export default function App() {
       }
 
       {/* Creation Modals (Admin privileges only) */}
-      {showCreateAdminModal && isAdmin && (
-        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
-          <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
-            <button onClick={() => setShowCreateAdminModal(false)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/10 transition-colors cursor-pointer" style={{ background: "transparent", border: "none" }}>
-              <X size={16} color="rgba(255,255,255,0.6)" />
-            </button>
-            <h2 className="text-white mb-6" style={{ fontSize: 20, fontWeight: 800 }}>Crear Usuario Admin</h2>
-            <input autoFocus type="text" placeholder="Usuario" value={newAdminUser} onChange={(e) => setNewAdminUser(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
-            <input type="password" placeholder="Contraseña" value={newAdminPass} onChange={(e) => setNewAdminPass(e.target.value)} className="w-full px-4 py-3 rounded-xl text-white mb-4 outline-none" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 14 }} />
-            {creationError && <p className="mb-4" style={{ color: "#FF5252", fontSize: 13, fontWeight: 600 }}>{creationError}</p>}
-            <button onClick={handleCreateAdmin} disabled={creationLoading} className="w-full py-3.5 rounded-xl transition-all hover:opacity-90 active:scale-[0.98] mt-2 text-white font-bold" style={{ background: creationLoading ? "#666" : "linear-gradient(135deg, #4CAF50, #2E7D32)", border: "none", cursor: creationLoading ? "not-allowed" : "pointer" }}>
-              {creationLoading ? "Creando..." : "Crear Usuario"}
-            </button>
-          </div>
-        </div>
-      )}
-
       {showCreateSectorModal && isAdmin && (
         <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(0,0,0,0.6)" }}>
           <div className="rounded-3xl p-8 flex flex-col relative" style={{ background: "#2A2A3E", width: 400, border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
@@ -3489,92 +3526,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Admin Management Modal */}
-      {showAdminManagement && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-all" style={{ background: "rgba(0,0,0,0.6)" }}>
-          <div className="w-[450px] rounded-3xl overflow-hidden flex flex-col" style={{ background: "#2A2A3E", border: "1.5px solid rgba(255,255,255,0.1)", boxShadow: "0 32px 80px rgba(0,0,0,0.65)" }}>
-            <div style={{ height: 4, background: "linear-gradient(90deg, #9C27B0, #26C6DA)" }} />
-            <div className="p-7">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-white font-black text-2xl tracking-tight">Gestionar Usuarios</h3>
-                <button onClick={() => setShowAdminManagement(false)} className="p-2 rounded-xl hover:bg-white/10" style={{ cursor: "pointer", background: "transparent", border: "none" }}><X size={20} color="white" /></button>
-              </div>
-
-              <div className="flex flex-col gap-3 max-h-[300px] overflow-y-auto mb-6 pr-2">
-                {loadingAdmins ? (
-                  <div className="py-10 text-center"><div className="inline-block rounded-full w-8 h-8 border-2 border-white/10 border-t-purple-500 animate-spin" /></div>
-                ) : adminUsers.map((u) => (
-                  <div key={u.id} className="flex items-center justify-between p-4 rounded-2xl" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                    <div>
-                      <p className="text-white font-bold">{u.username}</p>
-                      <p className="text-white/30 text-[10px] uppercase tracking-wider mt-0.5">ID: {u.id.substring(0, 8)}...</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button 
-                        onClick={() => { setEditingAdmin(u); setEditAdminUser(u.username); setEditAdminPass(""); }}
-                        className="p-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white"
-                        style={{ cursor: "pointer", background: "transparent", border: "none" }}
-                      >
-                        <Settings size={16} />
-                      </button>
-                      {u.username !== 'admin' && (
-                        <button 
-                          onClick={() => {
-                            setShowConfirmDelete({ 
-                              type: 'admin', 
-                              id: u.id, 
-                              name: u.username,
-                              onConfirm: async () => {
-                                await handleDeleteAdmin(u.id);
-                              }
-                            });
-                          }}
-                          className="p-2 rounded-lg hover:bg-red-500/20 text-red-400"
-                          style={{ cursor: "pointer", background: "transparent", border: "none" }}
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <button 
-                onClick={() => { setShowAdminManagement(false); setShowCreateAdminModal(true); }}
-                className="w-full py-4 rounded-2xl bg-purple-600/10 border border-dashed border-purple-500/40 text-purple-400 font-bold hover:bg-purple-600/20 transition-all mb-4"
-                style={{ cursor: "pointer" }}
-              >
-                + Crear Nuevo Administrador
-              </button>
-            </div>
-          </div>
-
-          {/* Edit Admin Sub-Modal */}
-          {editingAdmin && (
-            <div className="absolute inset-0 z-[60] flex items-center justify-center backdrop-blur-md" style={{ background: "rgba(0,0,0,0.4)" }}>
-              <div className="w-[380px] rounded-3xl p-7 flex flex-col gap-5" style={{ background: "#32324A", border: "1.5px solid rgba(255,255,255,0.15)", boxShadow: "0 20px 50px rgba(0,0,0,0.5)" }}>
-                <h4 className="text-white font-bold text-xl">Editar Usuario</h4>
-                <div className="flex flex-col gap-4">
-                  <div>
-                    <label className="text-white/40 text-[10px] uppercase font-bold mb-1.5 block">Nombre de Usuario</label>
-                    <input value={editAdminUser} onChange={e => setEditAdminUser(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-purple-500/50" />
-                  </div>
-                  <div>
-                    <label className="text-white/40 text-[10px] uppercase font-bold mb-1.5 block">Nueva Contraseña (dejar vacío para no cambiar)</label>
-                    <input type="password" value={editAdminPass} onChange={e => setEditAdminPass(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-purple-500/50" />
-                  </div>
-                </div>
-                <div className="flex gap-3 mt-2">
-                  <button onClick={() => setEditingAdmin(null)} className="flex-1 py-3 text-white/50 font-bold hover:text-white" style={{ cursor: "pointer", background: "transparent", border: "none" }}>Cancelar</button>
-                  <button onClick={handleUpdateAdmin} className="flex-1 py-3 bg-purple-600 rounded-xl text-white font-bold hover:bg-purple-500 transition-all shadow-lg shadow-purple-900/20" style={{ cursor: "pointer", border: "none" }}>Guardar Cambios</button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Confirmation Modal */}
       {showConfirmDelete && (
         <div className="absolute inset-0 z-[200] flex items-center justify-center p-4 backdrop-blur-md" style={{ background: "rgba(0,0,0,0.7)" }}>
@@ -3582,11 +3533,17 @@ export default function App() {
             <div className="flex items-center justify-center w-14 h-14 rounded-full bg-red-500/10 mb-6 mx-auto">
               <Trash2 size={28} color="#FF5252" />
             </div>
-            <h2 className="text-white mb-2 text-center" style={{ fontSize: 20, fontWeight: 800 }}>Finalizar Eliminación</h2>
+            <h2 className="text-white mb-2 text-center" style={{ fontSize: 20, fontWeight: 800 }}>{showConfirmDelete.titulo ?? "Finalizar Eliminación"}</h2>
             <p className="text-white/60 mb-8 text-center" style={{ fontSize: 14, lineHeight: 1.5 }}>
-              ¿Estás seguro que deseas eliminar <strong>{showConfirmDelete.name}</strong>?<br/>
-              {showConfirmDelete.type === 'sector' && <span className="text-red-400/80 text-[11px] font-bold mt-2 inline-block">ESTA ACCIÓN ELIMINARÁ TAMBIÉN TODOS SUS EMPLEADOS.</span>}
-              {showConfirmDelete.type !== 'sector' && "Esta acción no se puede deshacer."}
+              {showConfirmDelete.mensaje ? showConfirmDelete.mensaje : (
+                <>
+                  ¿Estás seguro que deseas eliminar <strong>{showConfirmDelete.name}</strong>?<br/>
+                  {/* La baja es logica (is_active = false): las tarjas quedan para la liquidacion. */}
+                  {showConfirmDelete.type === 'employee'
+                    ? "Queda dado de baja: deja de aparecer en la lista, pero sus tarjas se conservan para la liquidación."
+                    : "No tiene nada cargado, así que se borra."}
+                </>
+              )}
             </p>
             
             <div className="flex gap-3">
@@ -3607,7 +3564,7 @@ export default function App() {
                 className="flex-1 py-3.5 rounded-xl bg-red-500 text-white font-bold hover:bg-red-600 transition-all shadow-lg shadow-red-900/20"
                 style={{ border: "none", cursor: "pointer" }}
               >
-                Eliminar
+                {showConfirmDelete.boton ?? "Eliminar"}
               </button>
             </div>
           </div>
