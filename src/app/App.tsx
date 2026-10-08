@@ -2813,9 +2813,12 @@ export default function App() {
     }
   };
 
-  useEffect(() => { 
-    loadSectors(); 
-  }, []);
+  // Recien con la sesion: si se cargaba al abrir y todavia no se habia entrado
+  // con Google, los reportes volvian 401 y quedaban los sectores en rojo y las
+  // estadisticas en cero hasta que alguien cargara algo nuevo.
+  useEffect(() => {
+    if (isLoggedIn) loadSectors();
+  }, [isLoggedIn]);
 
   // ── Tiempo real (reemplaza al boton "Actualizar") ───────────────────────────
   // Cada 15 s se pregunta al server si cambio algo de lo que muestra el panel
