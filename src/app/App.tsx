@@ -1654,8 +1654,9 @@ const REPORT_CATEGORIES = [
     sectors: [
       'ZANJA', 'ZANJA ALDANA', 'ZANJA CHAVEZ', 'ZANJA RUIZ',
       'CARLETTO', 'CREMER', 'PESCADO',
-      'LAS CAÑADAS ARIEL', 'LAS CAÑADAS DOMINGO', 'LAS CAÑADAS DOMINGO TANTEROS', 'LAS CAÑADAS ESTRUCTURA',
-      'LAS CAÑADAS FLORENCIA', 'LAS CAÑADAS FLORENCIA TANTEROS', 'CAÑADAS SALA',
+      // 08/10/2026: "LAS CAÑADAS ..." pasaron a "CAÑADAS ..." (todos con el mismo formato).
+      'CAÑADAS ARIEL', 'CAÑADAS DOMINGO', 'CAÑADAS DOMINGO TANTEROS', 'CAÑADAS ESTRUCTURA',
+      'CAÑADAS FLORENCIA', 'CAÑADAS FLORENCIA TANTEROS', 'CAÑADAS SALA',
       'INVERNADERO ALBORNOZ', 'INVERNADERO ANDRES', 'INVERNADERO ILLESCA', 'INVERNADERO MANSILLA',
       'INVERNADERO MOLINA', 'INVERNADERO PEREZ', 'INVERNADERO REPARACION', 'INVERNADERO RIEGO',
       'PICHANAL',
@@ -1689,7 +1690,8 @@ const REPORT_CATEGORIES = [
     shadow: 'rgba(38,198,218,0.25)',
     icon: 'Factory' as const,
     // PAMPA BLANCA va junto a FABRICA (06/10/2026).
-    sectors: ['EMPAQUE', 'FABRICA', 'PAMPA BLANCA', 'FABRICA DE VIANDAS', 'PLANTA DE PROCESO', 'PLANTA SILO'],
+    // EMPAQUE se llama EMPAQUE EMBARCACION desde el 08/10/2026.
+    sectors: ['EMPAQUE EMBARCACION', 'FABRICA', 'PAMPA BLANCA', 'FABRICA DE VIANDAS', 'PLANTA DE PROCESO', 'PLANTA SILO'],
   },
   {
     id: 'ganaderia',
@@ -2716,15 +2718,26 @@ export default function App() {
               const n = parseFloat(s);
               return isNaN(n) ? 0 : n;
           };
-          const results = await Promise.all(sectors.filter((s) => !s.archivado).map(async (sec) => {
+          // Un solo pedido con las tarjas de hoy de todos los sectores no archivados
+          // (antes era un /api/admin/report por sector: 63 pedidos). Si el server no
+          // lo tiene, se vuelve al de a un sector. La cuenta de abajo es la misma.
+          let filasDelDia: any[] | null = null;
+          try {
+              const r = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin/report-dia?fecha=${todayStr}`, { headers });
+              if (r.ok) { const d = await r.json(); if (Array.isArray(d.rows)) filasDelDia = d.rows; }
+          } catch { /* se cae al camino de a un sector */ }
+          const fuentes: (Sector | null)[] = filasDelDia ? [null] : sectors.filter((s) => !s.archivado);
+          const results = await Promise.all(fuentes.map(async (sec) => {
               let sH = 0, sC = 0, sI = 0, sCj = 0, sCn = 0;
               let sFum = 0, sSiembra = 0, sBols = 0, sEtiq = 0, sCamion = 0, sEstiba = 0;
               let sCC = 0, sCI = 0, sCB = 0, sTI = 0, sTC = 0, sDesc = 0, sCarga = 0;
-              const url = `https://staffaxis-new-version-production.up.railway.app/api/admin/report?sector_id=${encodeURIComponent(sec.apiId)}&start_date=${todayStr}&end_date=${todayStr}`;
               try {
-                  const res = await fetch(url, { headers });
-                  if (res.ok) {
-                      const data = await res.json();
+                  let data: any = filasDelDia ? { rows: filasDelDia } : null;
+                  if (sec) {
+                      const res = await fetch(`https://staffaxis-new-version-production.up.railway.app/api/admin/report?sector_id=${encodeURIComponent(sec.apiId)}&start_date=${todayStr}&end_date=${todayStr}`, { headers });
+                      if (res.ok) data = await res.json();
+                  }
+                  if (data) {
                       if (data.rows && Array.isArray(data.rows)) {
                           for (const att of data.rows) {
                               // Igual que arriba: la cosecha sale de la columna.
@@ -2785,7 +2798,7 @@ export default function App() {
                       }
                   }
               } catch(err) {
-                  console.error("[Stats] Error for sector", sec.name, err);
+                  console.error("[Stats] Error for sector", sec?.name ?? "(todos)", err);
               }
               return { sH, sC, sI, sCj, sCn, sFum, sSiembra, sBols, sEtiq, sCamion, sEstiba,
                        sCC, sCI, sCB, sTI, sTC, sDesc, sCarga };

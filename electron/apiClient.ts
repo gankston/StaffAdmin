@@ -184,13 +184,16 @@ async function withConcurrency<T, R>(
  * If the request fails (network error, 5xx, or timeout) it waits 2 s and
  * retries once — this covers Turso cold-start hangs and transient 503s.
  */
-async function fetchSectorsOnce(attempt: number): Promise<Response> {
+async function fetchSectorsOnce(attempt: number, adminToken = '', dia = ''): Promise<Response> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12_000);
     try {
         // Con los archivados: el panel los muestra aparte e Informes los necesita
         // para la historia. Los telefonos piden /api/sectors sin esto y no los ven.
-        const res = await fetch(`${API_BASE}/api/sectors?incluir_archivados=1`, {
+        // Con tarjas_del (y el token) el server ya trae cuantas tarjas tiene cada
+        // sector ese dia: un pedido en vez de uno por sector.
+        const qs = `incluir_archivados=1${adminToken && dia ? `&tarjas_del=${dia}` : ''}`;
+        const res = await fetch(`${API_BASE}/api/sectors?${qs}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -198,6 +201,7 @@ async function fetchSectorsOnce(attempt: number): Promise<Response> {
                 'Cache-Control': 'no-cache, no-store, must-revalidate',
                 'Pragma': 'no-cache',
                 'Expires': '0',
+                ...(adminToken ? { 'X-Admin-Token': adminToken } : {}),
             },
             signal: ctrl.signal,
         });
@@ -214,20 +218,25 @@ export async function fetchSectors(adminToken = ''): Promise<UiSector[]> {
     try {
         console.log('--- INICIANDO PETICIÓN DE SECTORES ---');
 
+        // "Hoy" según TZ Argentina, no según TZ del SO del cliente.
+        // Esto evita que un encargado de noche (22:30 ART) pregunte por
+        // "mañana UTC" y el server le responda con sectores vacíos.
+        const today = todayInAppTz();
+
         let response: Response;
         try {
-            response = await fetchSectorsOnce(1);
+            response = await fetchSectorsOnce(1, adminToken, today);
         } catch (firstErr) {
             console.warn(`[fetchSectors] intento 1 fallido: ${firstErr}. Reintentando en 2 s…`);
             await new Promise(r => setTimeout(r, 2000));
-            response = await fetchSectorsOnce(2);
+            response = await fetchSectorsOnce(2, adminToken, today);
         }
 
         // Retry once more on 5xx (e.g. 503 Turso cold-start)
         if (!response.ok && response.status >= 500) {
             console.warn(`[fetchSectors] HTTP ${response.status} en intento 1. Reintentando en 2 s…`);
             await new Promise(r => setTimeout(r, 2000));
-            response = await fetchSectorsOnce(2);
+            response = await fetchSectorsOnce(2, adminToken, today);
         }
 
         console.log(`--- HTTP STATUS: ${response.status} ${response.statusText} ---`);
@@ -258,16 +267,25 @@ export async function fetchSectors(adminToken = ''): Promise<UiSector[]> {
 
         console.log(`Sectores base: ${baseSectors.length}`);
 
+        // Camino rapido: el server ya mando cuantas tarjas de hoy tiene cada sector
+        // (?tarjas_del). Es la misma cuenta que el /api/admin/report de abajo.
+        const tarjasDia = new Map<string, number>();
+        for (const s of parsed.sectors as any[]) {
+            if (s && typeof s.tarjas_dia === 'number') tarjasDia.set(String(s.id), s.tarjas_dia);
+        }
+        if (baseSectors.length > 0 && tarjasDia.size === baseSectors.length) {
+            console.log('--- SECTORES CON TARJAS DE HOY EN UN SOLO PEDIDO ---');
+            return baseSectors.map((sector) => ({
+                ...sector,
+                state: (tarjasDia.get(sector.apiId) ?? 0) > 0 ? 'sent' : 'missing' as 'sent' | 'missing',
+            }));
+        }
+
         // ── Parallel enrichment: fetch employee count AND attendances for each sector ──────────
         // This fills in sector.employees with the real count from the API.
         // It also checks if there are attendances for TODAY to determine the state.
 
-        // "Hoy" según TZ Argentina, no según TZ del SO del cliente.
-        // Esto evita que un encargado de noche (22:30 ART) pregunte por
-        // "mañana UTC" y el server le responda con sectores vacíos.
-        const today = todayInAppTz();
-
-        // Enriquecimiento: solo fetch de asistencias de HOY para determinar estado sent/missing.
+        // Enriquecimiento (si el server no mando tarjas_dia): solo fetch de asistencias de HOY para determinar estado sent/missing.
         // El employee_count ya viene embebido en la respuesta de /api/sectors (JOIN en DB).
         // Antes: 2 requests por sector (employees + attendances) → N×2 simultáneos → timeout en cascada.
         // Ahora: 1 request por sector (solo attendances) → N simultáneos con concurrencia controlada.
