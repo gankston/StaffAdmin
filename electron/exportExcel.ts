@@ -403,9 +403,13 @@ export async function exportExcel(
         // Indices calculados por nombre: antes se hacia con restas sobre la posicion de
         // ABONADA y cualquier columna nueva rompia silenciosamente los totales.
         const colDe = (header: string) => filaCabeceras.indexOf(header);
+        // El sector va al lado del encargado, en las mismas filas (columna D): asi no
+        // se corre ninguna fila de la planilla y el nombre del encargado, que se
+        // derrama sobre B y C, no queda tapado.
         const excelData: (string | number | null)[][] = [
-            ['ENCARGADO'],
-            [params?.encargado || 'SERGIO GODOY'],
+            // null (no ''): una celda con texto vacio corta el derrame del nombre.
+            ['ENCARGADO', null, null, 'SECTOR'],
+            [params?.encargado || 'SERGIO GODOY', null, null, params?.sectorName ?? null],
             [],
             filaCabeceras
         ];
