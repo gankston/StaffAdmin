@@ -16,7 +16,9 @@ import pkg from './package.json'
 export default defineConfig({
   base: '/admin/',
   define: {
-    __APP_VERSION__: JSON.stringify(`${pkg.version} (web)`),
+    // entry.ts arma el texto: adentro del programa de escritorio (visualizador) va sin "(web)".
+    __APP_VERSION__: 'window.__staffadminVersion',
+    __PKG_VERSION__: JSON.stringify(pkg.version),
   },
   plugins: [
     react(),

@@ -164,9 +164,9 @@ export function nombreArchivoInforme(params: PdfReportParams): string {
   return `Informe_${params.categoryName.replace(/\s+/g, '_')}_${fromYear}-${String(fromMonth).padStart(2, '0')}_${params.periodYear}-${String(params.periodMonth).padStart(2, '0')}.pdf`;
 }
 
-export async function generatePdfReport(
-  params: PdfReportParams
-): Promise<{ success: boolean; base64?: string; fileName?: string; error?: string }> {
+// HTML -> PDF con el motor de Electron. El visualizador (main.ts) lo usa con el
+// HTML que arma la pantalla (buildHTML, que viene del servidor).
+export async function htmlAPdf(html: string): Promise<Buffer> {
   let win: BrowserWindow | null = null;
   let tmpFile: string | null = null;
   try {
@@ -174,25 +174,32 @@ export async function generatePdfReport(
     // Large reports exceed Electron's data: URL size limit (ERR_INVALID_URL -300).
     // Write HTML to a temp file and load via file:// instead.
     tmpFile = path.join(app.getPath('temp'), `staffadmin-report-${Date.now()}-${Math.random().toString(36).slice(2)}.html`);
-    fs.writeFileSync(tmpFile, buildHTML(params), 'utf-8');
+    fs.writeFileSync(tmpFile, html, 'utf-8');
     await win.loadFile(tmpFile);
     // Wait a brief moment for layout/paint to complete for massive tables
     await new Promise(resolve => setTimeout(resolve, 800));
 
-    const buf = await win.webContents.printToPDF({
+    return await win.webContents.printToPDF({
       printBackground: true,
       landscape: false,
       pageSize: 'A4',
     });
-
-    return { success: true, base64: buf.toString('base64'), fileName: nombreArchivoInforme(params) };
-  } catch (err) {
-    console.error('[generatePdfReport]', (err as Error).message);
-    return { success: false, error: (err as Error).message };
   } finally {
     win?.close();
     if (tmpFile) {
       try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
     }
+  }
+}
+
+export async function generatePdfReport(
+  params: PdfReportParams
+): Promise<{ success: boolean; base64?: string; fileName?: string; error?: string }> {
+  try {
+    const buf = await htmlAPdf(buildHTML(params));
+    return { success: true, base64: buf.toString('base64'), fileName: nombreArchivoInforme(params) };
+  } catch (err) {
+    console.error('[generatePdfReport]', (err as Error).message);
+    return { success: false, error: (err as Error).message };
   }
 }

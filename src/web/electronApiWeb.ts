@@ -15,6 +15,11 @@
  *     HTML que imprime Electron (mismo motor, mismo resultado) y se guarda como PDF.
  *   - Ver certificado: se abre en otra pestaña en vez de con el programa de Windows.
  *   - Ingreso con Google: por redireccion, con el cliente OAuth "Web" (googleWeb.ts).
+ *
+ * El programa de escritorio es un visualizador de esta misma pagina. Ahi existe
+ * window.staffadminShell (electron/preload.ts) y esas tres cosas las hace el
+ * programa como antes: Google en el navegador, PDF con printToPDF y certificado
+ * con el programa de Windows.
  */
 import type { ElectronAPI } from '../../electron/preload';
 import { fetchSectors, fetchEmployees, fetchAttendances } from '../../electron/apiClient';
@@ -25,6 +30,9 @@ import { GOOGLE_WEB_CLIENT_ID, irAGoogle } from './googleWeb';
 const API_BASE = 'https://staffaxis-new-version-production.up.railway.app';
 
 let adminToken = '';
+
+// Solo adentro del programa de escritorio.
+const programa = window.staffadminShell;
 
 // Electron guarda el token en memoria al loguearse; si se recarga la pestaña,
 // App.tsx lo vuelve a pasar con setAdminToken, pero por las dudas se lee lo guardado.
@@ -148,6 +156,11 @@ const api: ElectronAPI = {
 
     generatePdfReport: async (params: any) => {
         try {
+            if (programa) {
+                // Como antes en el escritorio: App.tsx baja el PDF con este nombre.
+                const base64 = await programa.htmlAPdf(buildHTML(params));
+                return { success: true, base64, fileName: nombreArchivoInforme(params) };
+            }
             imprimirHtml(buildHTML(params), nombreArchivoInforme(params).replace(/\.pdf$/, ''));
             // Sin base64: el PDF lo guarda el dialogo de impresion, App.tsx no tiene que bajar nada.
             return { success: true };
@@ -159,6 +172,7 @@ const api: ElectronAPI = {
     // La pagina se va a Google y vuelve logueada (ver googleWeb.ts): esta promesa
     // no se resuelve, asi el boton queda en "cargando" hasta que se va.
     googleLogin: () => {
+        if (programa) return programa.googleLogin();
         if (!GOOGLE_WEB_CLIENT_ID) {
             return Promise.resolve({ success: false, error: 'El ingreso con Google todavía no está configurado en la versión web' });
         }
@@ -252,6 +266,21 @@ const api: ElectronAPI = {
     },
 
     certAbrir: async (id: string) => {
+        if (programa) {
+            // Como antes en el escritorio: lo abre el programa de Windows.
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/certificados/${id}/archivo`, {
+                    headers: { 'x-admin-token': token() },
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const tipo = res.headers.get('content-type') ?? '';
+                const ext = tipo.includes('pdf') ? '.pdf' : tipo.includes('png') ? '.png' : '.jpg';
+                return await programa.abrirArchivo(`certificado_${id}${ext}`, await res.arrayBuffer());
+            } catch (error) {
+                console.error('[escritorio cert-abrir]', error);
+                return { ok: false, error: 'No se pudo abrir el certificado' };
+            }
+        }
         // La pestaña se abre ya, con el click todavia "vivo": si se abre despues
         // del fetch, el navegador la bloquea como ventana emergente.
         const pestaña = window.open('', '_blank');

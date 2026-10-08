@@ -22,6 +22,9 @@ export default defineConfig({
       },
       preload: {
         input: 'electron/preload.ts',
+        // .cjs: el codigo sale en CommonJS y con .mjs Electron lo carga como ESM
+        // (y falla con "require is not defined") salvo con nodeIntegration.
+        vite: { build: { rollupOptions: { output: { entryFileNames: '[name].cjs' } } } },
       },
       renderer: process.env.NODE_ENV === 'test' ? undefined : {},
     }),

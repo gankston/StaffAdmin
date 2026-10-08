@@ -1,11 +1,10 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, IpcMainInvokeEvent } from 'electron';
 import * as http from 'http';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
 import { autoUpdater } from 'electron-updater';
 import path, { dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { toggleSectorState } from './database';
-import { fetchSectors, fetchEmployees, fetchAttendances, getFotoBase64, uploadFotoFromFile, deleteFotoApi, subirCertificadoDesdeArchivo, bajarCertificado } from './apiClient';
 import log from 'electron-log';
 
 // ─── electron-log configuration ────────────────────────────────────────────
@@ -24,10 +23,40 @@ log.info(`Log file: ${log.transports.file.getFile().path}`);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-import { exportExcel, ExportParams } from './exportExcel';
-import { generatePdfReport, PdfReportParams } from './reportPdf';
+import { htmlAPdf } from './reportPdf';
 
 const isDev = !app.isPackaged;
+
+// ─── Visualizador ───────────────────────────────────────────────────────────
+// La pantalla viene del servidor (la misma de /admin/): cada cambio que se sube
+// aparece al abrir el programa, sin instalar nada. El programa solo pone la
+// ventana y lo que una pagina no puede hacer sola (preload.ts).
+const URL_PANTALLA = process.env.STAFFADMIN_URL || 'https://staffaxis-new-version-production.up.railway.app/admin/';
+const ORIGEN = new URL(URL_PANTALLA).origin;
+
+// Lo que pide el programa solo se atiende si lo pide la pantalla de StaffAdmin.
+function desdeLaPantalla(event: IpcMainInvokeEvent): void {
+    const url = event.senderFrame?.url ?? '';
+    if (!url.startsWith(ORIGEN + '/')) throw new Error(`Pedido rechazado desde ${url || 'origen desconocido'}`);
+}
+
+function paginaSinConexion(error: string): string {
+    return 'data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html><html lang="es"><head><meta charset="utf-8">
+<style>
+  html,body{height:100%;margin:0}
+  body{background:#12121c;color:#e8e8f0;font-family:"Segoe UI",sans-serif;display:flex;align-items:center;justify-content:center;-webkit-app-region:drag}
+  .caja{text-align:center;max-width:440px;padding:24px}
+  h1{font-size:20px;margin:0 0 10px}
+  p{color:#a0a0b8;font-size:14px;line-height:1.5;margin:0 0 20px}
+  button{-webkit-app-region:no-drag;background:linear-gradient(135deg,#7c4dff,#00bcd4);color:#fff;border:0;border-radius:10px;padding:10px 22px;font-size:14px;cursor:pointer}
+  small{display:block;margin-top:16px;color:#5c5c74;font-size:11px}
+</style></head><body><div class="caja">
+<h1>No se pudo conectar con StaffAdmin</h1>
+<p>Revisá la conexión a internet. Se vuelve a intentar solo cada 15 segundos.</p>
+<button onclick="location.href=${JSON.stringify(URL_PANTALLA).replace(/"/g, '&quot;')}">Reintentar ahora</button>
+<small>${error.replace(/[<>&]/g, '')}</small>
+</div><script>setTimeout(function(){location.href=${JSON.stringify(URL_PANTALLA)}},15000)</script></body></html>`);
+}
 
 // ─── auto-updater configuration ─────────────────────────────────────────────
 autoUpdater.autoDownload = false;
@@ -57,7 +86,6 @@ autoUpdater.on('error', (err) => {
 });
 
 let mainWindow: BrowserWindow | null = null;
-let adminToken = '';
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -66,10 +94,13 @@ function createWindow() {
         minWidth: 1024,
         minHeight: 768,
         show: false,
+        backgroundColor: '#12121c',
         webPreferences: {
-            preload: path.join(__dirname, 'preload.mjs'), // Important for Vite output
-            nodeIntegration: true,
+            preload: path.join(__dirname, 'preload.cjs'), // ver vite.config.ts
+            // La pagina viene de internet: sin Node, aislada y en sandbox.
+            nodeIntegration: false,
             contextIsolation: true,
+            sandbox: true,
         },
         titleBarStyle: 'hidden', // Give it a more native app feel
         titleBarOverlay: {
@@ -84,11 +115,23 @@ function createWindow() {
         mainWindow?.show();
     });
 
-    if (process.env.VITE_DEV_SERVER_URL) {
-        mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-    } else {
-        mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
-    }
+    const cargarPantalla = () => mainWindow?.loadURL(URL_PANTALLA, { extraHeaders: 'pragma: no-cache\n' });
+
+    // Sin internet (o el servidor caido): cartel propio en vez de la pagina de error de Chromium.
+    mainWindow.webContents.on('did-fail-load', (_e, codigo, descripcion, url, esPrincipal) => {
+        if (!esPrincipal || codigo === -3 /* ERR_ABORTED: otra navegacion la reemplazo */) return;
+        log.warn(`[visualizador] no cargo ${url}: ${codigo} ${descripcion}`);
+        mainWindow?.loadURL(paginaSinConexion(`${descripcion} (${codigo})`));
+    });
+
+    // La ventana se queda en StaffAdmin: cualquier otro sitio se abre en el navegador.
+    mainWindow.webContents.on('will-navigate', (e, url) => {
+        if (url.startsWith(ORIGEN + '/')) return;
+        e.preventDefault();
+        if (/^https?:/.test(url)) shell.openExternal(url);
+    });
+
+    cargarPantalla();
 
     mainWindow.on('closed', () => {
         mainWindow = null;
@@ -110,121 +153,36 @@ app.whenReady().then(() => {
         autoUpdater.checkForUpdates();
     }
 
-    ipcMain.handle('set-admin-token', (_event, token: string) => {
-        adminToken = token;
-        log.info('[IPC] Admin token actualizado');
+    // ─── Lo que la pantalla le pide al programa (preload.ts) ────────────────
+    // Los datos, el Excel y lo demas los hace la pantalla (src/web/electronApiWeb.ts).
+
+    // PDF de Informes: mismo printToPDF que antes. El HTML lo arma la pantalla.
+    ipcMain.handle('html-a-pdf', async (event, html: string) => {
+        desdeLaPantalla(event);
+        return (await htmlAPdf(String(html))).toString('base64');
     });
 
-    ipcMain.handle('get-sectors', async () => {
+    // Certificados: se guardan en temp y los abre el programa de Windows, como antes.
+    // Solo fotos y PDF: la pantalla no tiene que poder abrir un ejecutable.
+    ipcMain.handle('abrir-archivo', async (event, nombre: string, datos: ArrayBuffer) => {
+        desdeLaPantalla(event);
+        const archivo = path.basename(String(nombre)).replace(/[^\w.-]/g, '_');
+        if (!/\.(pdf|jpe?g|png)$/i.test(archivo)) return { ok: false, error: 'Tipo de archivo no permitido' };
         try {
-            return await fetchSectors(adminToken);
-        } catch (error) {
-            console.error('[IPC get-sectors] API failed, returning empty list:', error);
-            return [];
-        }
-    });
-    ipcMain.handle('get-employees', async (_event, sectorId: string, tokenArg?: string) => {
-        try {
-            const token = tokenArg || adminToken;
-            return await fetchEmployees(sectorId, token);
-        } catch (error) {
-            console.error(`[IPC get-employees] Failed for ${sectorId}:`, error);
-            return [];
-        }
-    });
-    ipcMain.handle('toggle-sector', (_event, id) => toggleSectorState(id));
-    ipcMain.handle('get-attendances', async (_event, sectorId: string, startDate: string, endDate: string, adminToken?: string) => {
-        try {
-            const result = await fetchAttendances(sectorId, startDate, endDate, adminToken);
-            if (result.length > 0) {
-                log.info(`[IPC get-attendances] Sample record keys for ${sectorId}: ${JSON.stringify(Object.keys(result[0]))}`);
-                log.info(`[IPC get-attendances] Sample record: ${JSON.stringify(result[0])}`);
-            }
-            return result;
-        } catch (error) {
-            console.error(`[IPC get-attendances] Failed for ${sectorId}:`, error);
-            // Se propaga: con [] la pantalla generaba el Excel con el sector en cero.
-            throw error;
-        }
-    });
-    ipcMain.handle('export-excel', async (_event, params: ExportParams) => await exportExcel(mainWindow, params));
-
-    // ─── Fotos de DNI ───────────────────────────────────────────────────────
-    ipcMain.handle('get-foto', async (_event, employeeId: string, lado: string) => {
-        try {
-            return await getFotoBase64(employeeId, lado, adminToken);
-        } catch (error) {
-            log.error(`[IPC get-foto]`, error);
-            return null;
-        }
-    });
-
-    ipcMain.handle('upload-foto', async (_event, employeeId: string, lado: string, filePath: string) => {
-        try {
-            await uploadFotoFromFile(employeeId, lado, filePath, adminToken);
-            return { success: true };
-        } catch (error) {
-            log.error(`[IPC upload-foto]`, error);
-            return { success: false, error: String(error) };
-        }
-    });
-
-    ipcMain.handle('delete-foto', async (_event, employeeId: string, lado: string) => {
-        try {
-            await deleteFotoApi(employeeId, lado, adminToken);
-            return { success: true };
-        } catch (error) {
-            log.error(`[IPC delete-foto]`, error);
-            return { success: false, error: String(error) };
-        }
-    });
-
-    ipcMain.handle('open-file-dialog', async () => {
-        if (!mainWindow) return null;
-        const result = await dialog.showOpenDialog(mainWindow, {
-            properties: ['openFile'],
-            filters: [{ name: 'Imágenes', extensions: ['jpg', 'jpeg', 'png'] }],
-        });
-        if (result.canceled || result.filePaths.length === 0) return null;
-        return result.filePaths[0];
-    });
-
-    // ─── Certificados medicos ───────────────────────────────────────────────
-    ipcMain.handle('cert-elegir-archivo', async () => {
-        if (!mainWindow) return null;
-        const result = await dialog.showOpenDialog(mainWindow, {
-            title: 'Certificado médico: elegí la foto o el PDF',
-            properties: ['openFile'],
-            filters: [{ name: 'Foto o PDF', extensions: ['jpg', 'jpeg', 'png', 'pdf'] }],
-        });
-        if (result.canceled || result.filePaths.length === 0) return null;
-        return result.filePaths[0];
-    });
-
-    ipcMain.handle('cert-subir', async (_event, employeeId: string, fechas: string[], observaciones: string, filePath: string) => {
-        try {
-            return await subirCertificadoDesdeArchivo(employeeId, fechas, observaciones, filePath, adminToken);
-        } catch (error) {
-            log.error(`[IPC cert-subir]`, error);
-            return { ok: false, error: 'No se pudo subir el certificado (sin conexión?)' };
-        }
-    });
-
-    // Lo abre con el programa que tenga Windows para fotos o PDF.
-    ipcMain.handle('cert-abrir', async (_event, id: string) => {
-        try {
-            const ruta = await bajarCertificado(id, app.getPath('temp'), adminToken);
+            const ruta = path.join(app.getPath('temp'), archivo);
+            await fs.promises.writeFile(ruta, Buffer.from(datos));
             const error = await shell.openPath(ruta);
             return error ? { ok: false, error } : { ok: true };
         } catch (error) {
-            log.error(`[IPC cert-abrir]`, error);
+            log.error('[IPC abrir-archivo]', error);
             return { ok: false, error: 'No se pudo abrir el certificado' };
         }
     });
 
     // ─── Google OAuth ────────────────────────────────────────────────────────
     const GOOGLE_CLIENT_ID = '123351582964-3o87ns87o1opd15jgl8gke0m8etdh4ko.apps.googleusercontent.com';
-    ipcMain.handle('google-login', () => new Promise((resolve) => {
+    ipcMain.handle('google-login', (event) => new Promise((resolve) => {
+        desdeLaPantalla(event);
         const server = http.createServer();
         server.listen(0, '127.0.0.1', () => {
             const port = (server.address() as any).port;
@@ -290,7 +248,6 @@ app.whenReady().then(() => {
                     });
                     const data: any = await resp.json();
                     if (data.token) {
-                        adminToken = data.token;
                         resolve({ success: true, token: data.token, user: data.user ?? { email: userInfo.email, name: userInfo.name, picture: userInfo.picture } });
                     } else {
                         resolve({ success: false, error: data.error || 'Error al obtener token de Railway' });
@@ -301,7 +258,6 @@ app.whenReady().then(() => {
             });
         });
     }));
-    ipcMain.handle('generate-pdf-report', async (_event, params: PdfReportParams) => await generatePdfReport(params));
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();

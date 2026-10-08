@@ -3,6 +3,9 @@
 import './electronApiWeb';
 import { volverDeGoogle } from './googleWeb';
 
+// La version que muestra Info (App.tsx usa __APP_VERSION__ = window.__staffadminVersion).
+window.__staffadminVersion = window.staffadminShell ? __PKG_VERSION__ : `${__PKG_VERSION__} (web)`;
+
 volverDeGoogle().finally(() => import('../main.tsx'));
 
 // Volver con "Atras" desde la pantalla de Google trae la pagina congelada (bfcache)
