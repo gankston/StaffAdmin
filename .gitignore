@@ -13,3 +13,4 @@ StaffAdmin.zip
 .env*.local
 dist-web
 dist-v2
+dist-release
